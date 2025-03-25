@@ -12,7 +12,7 @@ For more information, please check information on `Omniverse Nucleus`_.
 
 .. _Omniverse Nucleus: https://docs.omniverse.nvidia.com/nucleus/latest/overview/overview.html
 """
-
+# ln -s ${HOME}/isaacsim _isaac_sim
 import io
 import os
 import tempfile
@@ -21,7 +21,8 @@ from typing import Literal
 import carb
 import omni.client
 
-NUCLEUS_ASSET_ROOT_DIR = carb.settings.get_settings().get("/persistent/isaac/asset_root/cloud")
+# NUCLEUS_ASSET_ROOT_DIR = carb.settings.get_settings().get("/persistent/isaac/asset_root/cloud")
+NUCLEUS_ASSET_ROOT_DIR = "home/li/isaac-sim-asserts/Assets/Isaac/4.5"
 """Path to the root directory on the Nucleus Server."""
 
 NVIDIA_NUCLEUS_DIR = f"{NUCLEUS_ASSET_ROOT_DIR}/NVIDIA"
