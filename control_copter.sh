@@ -1,0 +1,1 @@
+./isaaclab.sh -p scripts/reinforcement_learning/rsl_rl/train.py --task=Isaac-Quadcopter-Direct-v0 --headless

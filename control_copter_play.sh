@@ -1,0 +1,1 @@
+./isaaclab.sh -p scripts/reinforcement_learning/rsl_rl/play.py --task=Isaac-Quadcopter-Direct-v0 --num_envs=32
