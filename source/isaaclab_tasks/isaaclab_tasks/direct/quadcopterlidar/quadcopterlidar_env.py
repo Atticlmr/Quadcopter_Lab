@@ -14,8 +14,8 @@ from isaaclab.sim import SimulationCfg
 from isaaclab.assets import Articulation, ArticulationCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.envs import DirectRLEnv,  DirectRLEnvCfg, ViewerCfg
-from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
-from isaaclab.utils.math import sample_uniform
+# from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
+# from isaaclab.utils.math import sample_uniform
 from isaaclab.managers import SceneEntityCfg
 import isaaclab.envs.mdp as mdp
 from isaaclab.envs.ui import BaseEnvWindow
