@@ -145,6 +145,7 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
         print(scene["camera"])
         print("Received shape of rgb   image: ", scene["camera"].data.output["rgb"].shape)
         print("Received shape of depth image: ", scene["camera"].data.output["distance_to_image_plane"].shape)
+        # print("flattened ", scene["camera"].data.output["distance_to_image_plane"].flatten().shape)
         print("-------------------------------")
         print(scene["height_scanner"])
         print("Received max height value: ", torch.max(scene["height_scanner"].data.ray_hits_w[..., -1]).item())

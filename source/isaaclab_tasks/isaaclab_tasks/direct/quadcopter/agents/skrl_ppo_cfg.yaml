@@ -3,6 +3,8 @@ seed: 42
 
 # Models are instantiated using skrl's model instantiator utility
 # https://skrl.readthedocs.io/en/latest/api/utils/model_instantiators.html
+
+
 models:
   separate: False
   policy:  # see gaussian_model parameters
@@ -13,21 +15,40 @@ models:
     max_log_std: 2.0
     initial_log_std: 0.0
     network:
-      - name: net
-        input: STATES
-        layers: [64, 64]
-        activations: elu
+      - name: cnn_encoder
+        input: STATES[:, :6400].reshape(-1, 1, 80, 80)
+        layers: 
+          - conv2d: {out_channels: 32, kernel_size: 5, stride: 2, padding: 2}
+          
+          - conv2d: {out_channels: 64, kernel_size: 3, stride: 2, padding: 1}
+         
+          - flatten: {start_dim: 1}  
+        activations: [relu, relu, relu]
+        output: cnn_features  
+
+      # MLP处理状态向量 (后12维)
+      - name: state_processor
+        input: STATES[:, -12:]  # [20,12]
+        layers: [128, 64]
+        activations: relu
+        output: state_features  
+
+      # 特征融合层
+      - name: merged_features
+        input: concatenate([cnn_encoder, state_processor])
+        layers: [256,128]
+        activations: [relu, relu]
     output: ACTIONS
+    
   value:  # see deterministic_model parameters
     class: DeterministicMixin
     clip_actions: False
     network:
       - name: net
-        input: STATES
-        layers: [64, 64]
+        input:  STATES[:, -12:]
+        layers: [128, 64]
         activations: elu
     output: ONE
-
 
 # Rollout memory
 # https://skrl.readthedocs.io/en/latest/api/memories/random.html
@@ -76,5 +97,7 @@ agent:
 # https://skrl.readthedocs.io/en/latest/api/trainers/sequential.html
 trainer:
   class: SequentialTrainer
-  timesteps: 4800
+  timesteps: 20
+  # timesteps: 4800
   environment_info: log
+

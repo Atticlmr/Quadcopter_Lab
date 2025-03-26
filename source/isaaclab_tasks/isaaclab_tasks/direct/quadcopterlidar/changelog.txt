@@ -1,0 +1,6 @@
+# 20250326
+        self._body_id, _ = self._robot.find_bodies("body")
+        # self._body_id, _ = self._robot.find_bodies("body")[0]?
+# 20250326
+        self._actions = actions.clone().clamp(-2.0, 2.0)
+        # self._actions = actions.clone().clamp(-1.0, 1.0)

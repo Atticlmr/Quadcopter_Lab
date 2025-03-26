@@ -5,7 +5,7 @@
 
 """Configuration for custom terrains."""
 
-from typing import Iterable
+# from typing import Iterable
 import isaaclab.terrains as terrain_gen
 from isaaclab.terrains.terrain_generator_cfg import TerrainGeneratorCfg
 
@@ -32,7 +32,7 @@ def QUADCOPTER_ROUGH_TERRAINS_CFG_FACTORY(
         use_cache=False,
         sub_terrains={
             "repeated_cylinders": MeshRepeatedCylindersTerrainCfg(
-                proportion=0.975,
+                proportion=0.975, # 不同terrain的采样概率
                 # border_width=border_width_subterrain,
                 platform_width=platform_width_subterrain,
                 # platform_height=0.0,

@@ -161,6 +161,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
 
+    
+
+
     # convert to single-agent instance if required by the RL algorithm
     if isinstance(env.unwrapped, DirectMARLEnv) and algorithm in ["ppo"]:
         env = multi_agent_to_single_agent(env)
@@ -176,7 +179,18 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         print("[INFO] Recording videos during training.")
         print_dict(video_kwargs, nesting=4)
         env = gym.wrappers.RecordVideo(env, **video_kwargs)
+    # ---------------------------------------------------------------------
+    # 调试代码：打印原始观测空间信息
+    print("\n[DEBUG] Raw environment observation space:")
+    if hasattr(env.observation_space, 'spaces'):  # 如果是Dict空间
+        print("Observation keys:", list(env.observation_space.spaces.keys()))
+        for key, space in env.observation_space.spaces.items():
+            print(f"  {key}: {space}")
+    else:  # 如果是Box空间
+        print(f"Observation space: {env.observation_space}")
 
+
+    # ---------------------------------------------------------------------
     # wrap around environment for skrl
     env = SkrlVecEnvWrapper(env, ml_framework=args_cli.ml_framework)  # same as: `wrap_env(env, wrapper="auto")`
 

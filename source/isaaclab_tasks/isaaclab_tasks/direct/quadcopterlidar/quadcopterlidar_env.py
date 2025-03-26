@@ -77,6 +77,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     observation_space = 59
     state_space = 0
     debug_vis = True
+
     size_terrain = 25.0
     objects_density_min = 0.17
     objects_density_max = 0.7
@@ -89,7 +90,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     sim: SimulationCfg = SimulationCfg(
         dt=dt,
         render_interval=decimation,
-        disable_contact_processing=True,
+        # disable_contact_processing=True,
         physics_material=sim_utils.RigidBodyMaterialCfg(
             friction_combine_mode="multiply",
             restitution_combine_mode="multiply",
@@ -146,7 +147,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     )
     scaling_lidar_data_b = 1/6.0
     contact_sensor: ContactSensorCfg = ContactSensorCfg(
-        prim_path="/World/envs/env_.*/Robot/.*", history_length=2, update_period= dt, track_air_time=False
+        prim_path="/World/envs/env_.*/Robot/.*", history_length=2, update_period= dt, # track_air_time=False
     )
     # contact_forces = ContactSensorCfg(
     #     prim_path="{ENV_REGEX_NS}/Robot/.*_FOOT", update_period=0.0, history_length=6, debug_vis=True
@@ -219,7 +220,13 @@ class QuadcopterEnv(DirectRLEnv):
             ]
         }
         # Get specific body indices
+        # find_bodys: 
+        # Returns:
+            # A tuple of lists containing the body indices and names.
+
+        # 20250326
         self._body_id, _ = self._robot.find_bodies("body")
+        # self._body_id, _ = self._robot.find_bodies("body")[0]?
         self._undesired_contact_body_ids = SceneEntityCfg("contact_sensor", body_names=".*").body_ids
         self._robot_mass = self._robot.root_physx_view.get_masses()[0].sum()
         self._gravity_magnitude = torch.tensor(self.sim.cfg.gravity, device=self.device).norm()
@@ -231,6 +238,7 @@ class QuadcopterEnv(DirectRLEnv):
     def _setup_scene(self):
         self._robot = Articulation(self.cfg.robot)
         self.scene.articulations["robot"] = self._robot
+        # lidar
         self._contact_sensor = ContactSensor(self.cfg.contact_sensor)
         self.scene.sensors["contact_sensor"] = self._contact_sensor
         self._simple_lidar = RayCaster(self.cfg.simple_lidar)
@@ -247,7 +255,9 @@ class QuadcopterEnv(DirectRLEnv):
         light_cfg.func("/World/Light", light_cfg)
 
     def _pre_physics_step(self, actions: torch.Tensor):
-        self._actions = actions.clone().clamp(-2.0, 2.0)
+        self._actions = actions.clone().clamp(-2.0, 2.0) # 裁剪推力
+        # 20250326
+        # self._actions = actions.clone().clamp(-1.0, 1.0)?
         self._thrust[:, 0, 2] = self.cfg.thrust_to_weight * self._robot_weight * (self.cfg.thrust_scale * self._actions[:, 0] + 1.0) / 2.0
         self._moment[:, 0, :] = self.cfg.moment_scale * self._actions[:, 1:]
 

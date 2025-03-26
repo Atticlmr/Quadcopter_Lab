@@ -1,6 +1,6 @@
 seed: 42
 
-
+# 假设前端数据300 x 200的深度信息
 # Models are instantiated using skrl's model instantiator utility
 # https://skrl.readthedocs.io/en/latest/api/utils/model_instantiators.html
 models:

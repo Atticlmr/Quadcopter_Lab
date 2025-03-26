@@ -13,18 +13,38 @@ models:
     max_log_std: 2.0
     initial_log_std: 0.0
     network:
-      - name: net
-        input: STATES
-        layers: [32, 32]
+      - name: cnn_encoder
+        input: STATES[:, :6400].reshape(-1, 1, 80, 80)
+        layers: 
+          - conv2d: {out_channels: 32, kernel_size: 5, stride: 2, padding: 2}
+          
+          - conv2d: {out_channels: 64, kernel_size: 3, stride: 2, padding: 1}
+         
+          - flatten: {start_dim: 1}  
+        activations: [elu, elu, elu]
+        output: cnn_features  
+
+      # MLP处理状态向量 (后12维)
+      - name: state_processor
+        input: STATES[:, -12:]  # [20,12]
+        layers: [128, 64]
+        activations: elu
+        output: state_features  
+
+      # 特征融合层
+      - name: merged_features
+        input: concatenate([cnn_encoder, state_processor])
+        layers: [256,128]
         activations: elu
     output: ACTIONS
+    
   value:  # see deterministic_model parameters
     class: DeterministicMixin
     clip_actions: False
     network:
       - name: net
-        input: STATES
-        layers: [32, 32]
+        input:  STATES[:, -12:]
+        layers: [128, 64]
         activations: elu
     output: ONE
 
@@ -40,15 +60,15 @@ memory:
 # https://skrl.readthedocs.io/en/latest/api/agents/ppo.html
 agent:
   class: PPO
-  rollouts: 32
-  learning_epochs: 8
-  mini_batches: 8
+  rollouts: 24
+  learning_epochs: 5
+  mini_batches: 4
   discount_factor: 0.99
   lambda: 0.95
   learning_rate: 5.0e-04
   learning_rate_scheduler: KLAdaptiveLR
   learning_rate_scheduler_kwargs:
-    kl_threshold: 0.008
+    kl_threshold: 0.016
   state_preprocessor: RunningStandardScaler
   state_preprocessor_kwargs: null
   value_preprocessor: RunningStandardScaler
@@ -60,13 +80,13 @@ agent:
   value_clip: 0.2
   clip_predicted_values: True
   entropy_loss_scale: 0.0
-  value_loss_scale: 2.0
+  value_loss_scale: 1.0
   kl_threshold: 0.0
-  rewards_shaper_scale: 0.1
+  rewards_shaper_scale: 0.01
   time_limit_bootstrap: False
   # logging and checkpoint
   experiment:
-    directory: "cartpole_direct"
+    directory: "quadcopter_direct"
     experiment_name: ""
     write_interval: auto
     checkpoint_interval: auto
@@ -76,5 +96,7 @@ agent:
 # https://skrl.readthedocs.io/en/latest/api/trainers/sequential.html
 trainer:
   class: SequentialTrainer
-  timesteps: 4800
+  timesteps: 20000
+  # timesteps: 4800
   environment_info: log
+

@@ -8,15 +8,100 @@ from __future__ import annotations
 import math
 import torch
 from collections.abc import Sequence
-
+from isaaclab.envs.ui import BaseEnvWindow
 import isaaclab.sim as sim_utils
 from isaaclab.assets import Articulation
 from isaaclab.envs import DirectRLEnv
 from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
 from isaaclab.utils.math import sample_uniform
+import isaaclab.envs.mdp as mdp
+from isaaclab_assets.robots.cartpole import CARTPOLE_CFG
+from isaaclab.managers import EventTermCfg as EventTerm
+from isaaclab.assets import ArticulationCfg
+from isaaclab.envs import DirectRLEnvCfg
+from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.sim import SimulationCfg
+from isaaclab.utils import configclass
+from isaaclab.managers import SceneEntityCfg
 
-from .quadcopterend2end_env_cfg import Quadcopterend2endEnvCfg
+##
+# Pre-defined configs
+##
+from isaaclab_assets import CRAZYFLIE_CFG  # isort: skip
+from isaaclab.markers import CUBOID_MARKER_CFG  # isort: skip
+from isaaclab.terrains.config import QUADCOPTER_ROUGH_TERRAINS_CFG_FACTORY
 
+class QuadcopterEnvWindow(BaseEnvWindow):
+    """Window manager for the Quadcopter environment."""
+
+    def __init__(self, env: Quadcopterend2endEnv, window_name: str = "IsaacLab"):
+        """Initialize the window.
+
+        Args:
+            env: The environment object.
+            window_name: The name of the window. Defaults to "IsaacLab".
+        """
+        # initialize base window
+        super().__init__(env, window_name)
+        # add custom UI elements
+        with self.ui_window_elements["main_vstack"]:
+            with self.ui_window_elements["debug_frame"]:
+                with self.ui_window_elements["debug_vstack"]:
+                    # add command manager visualization
+                    self._create_debug_vis_ui_element("targets", self.env)
+
+@configclass
+class EventCfg:
+    """
+    Configuration for randomization.
+    域随机化 随机质量
+    """
+
+    add_body_mass = EventTerm(
+        func=mdp.randomize_rigid_body_mass,
+        mode="startup",
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names="body"),
+            "mass_distribution_params": (0.975, 1.025),
+            "operation": "scale",
+        },
+    )
+
+@configclass
+class Quadcopterend2endEnvCfg(DirectRLEnvCfg):
+    # env
+    decimation = 2
+    episode_length_s = 10.0
+    # - spaces definition
+    action_space = 4
+    observation_space = 6412
+    state_space = 0
+    debug_vis = True
+
+    # simulation
+    sim: SimulationCfg = SimulationCfg(dt=1 / 120, render_interval=decimation)
+
+    # robot(s)
+    robot_cfg: ArticulationCfg = CARTPOLE_CFG.replace(prim_path="/World/envs/env_.*/Robot")
+
+    # scene
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=4096, env_spacing=4.0, replicate_physics=True)
+
+    # custom parameters/scales
+    # - controllable joint
+    cart_dof_name = "slider_to_cart"
+    pole_dof_name = "cart_to_pole"
+    # - action scale
+    action_scale = 100.0  # [N]
+    # - reward scales
+    rew_scale_alive = 1.0
+    rew_scale_terminated = -2.0
+    rew_scale_pole_pos = -1.0
+    rew_scale_cart_vel = -0.01
+    rew_scale_pole_vel = -0.005
+    # - reset states/conditions
+    initial_pole_angle_range = [-0.25, 0.25]  # pole angle sample range on reset [rad]
+    max_cart_pos = 3.0  # reset if cart exceeds this position [m]
 
 class Quadcopterend2endEnv(DirectRLEnv):
     cfg: Quadcopterend2endEnvCfg

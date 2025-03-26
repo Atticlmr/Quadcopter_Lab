@@ -18,7 +18,7 @@ from isaaclab.sim import SimulationCfg
 from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.math import subtract_frame_transforms
-
+from isaaclab.sensors import TiledCameraCfg,TiledCamera
 ##
 # Pre-defined configs
 ##
@@ -52,7 +52,8 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     episode_length_s = 10.0
     decimation = 2
     action_space = 4
-    observation_space = 12
+    # observation_space = 12
+    observation_space = 6412
     state_space = 0
     debug_vis = True
 
@@ -89,6 +90,19 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
 
     # robot
     robot: ArticulationCfg = CRAZYFLIE_CFG.replace(prim_path="/World/envs/env_.*/Robot")
+    
+    # depth camera
+    tiled_camera: TiledCameraCfg = TiledCameraCfg(
+    prim_path="/World/envs/env_.*/Robot/body/camera",
+    offset=TiledCameraCfg.OffsetCfg(pos=(0.0, 0.0, 0.01)),
+    data_types=["depth"],
+    spawn=sim_utils.PinholeCameraCfg(
+        focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 20.0)
+    ),
+    width=80,
+    height=80,)
+
+
     thrust_to_weight = 1.9
     moment_scale = 0.01
 
@@ -133,6 +147,9 @@ class QuadcopterEnv(DirectRLEnv):
         self._robot = Articulation(self.cfg.robot)
         self.scene.articulations["robot"] = self._robot
 
+        self._tiledcamera = TiledCamera(self.cfg.tiled_camera)
+        self.scene.sensors["simple_lidar"] = self._tiledcamera
+
         self.cfg.terrain.num_envs = self.scene.cfg.num_envs
         self.cfg.terrain.env_spacing = self.scene.cfg.env_spacing
         self._terrain = self.cfg.terrain.class_type(self.cfg.terrain)
@@ -154,8 +171,13 @@ class QuadcopterEnv(DirectRLEnv):
         desired_pos_b, _ = subtract_frame_transforms(
             self._robot.data.root_state_w[:, :3], self._robot.data.root_state_w[:, 3:7], self._desired_pos_w
         )
+        # num_envs x 80 x 80
+        # 展开为 num_envs x 6400 再拼接 
+        # depthimage = self._tiledcamera.data.output["depth"]
+        depthimage = self._tiledcamera.data.output["depth"].reshape(self.num_envs, -1)
         obs = torch.cat(
             [
+                depthimage,
                 self._robot.data.root_lin_vel_b,
                 self._robot.data.root_ang_vel_b,
                 self._robot.data.projected_gravity_b,
