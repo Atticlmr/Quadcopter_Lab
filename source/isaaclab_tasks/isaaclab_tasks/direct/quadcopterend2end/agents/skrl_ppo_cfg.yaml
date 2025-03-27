@@ -14,7 +14,7 @@ models:
     initial_log_std: 0.0
     network:
       - name: cnn_encoder
-        input: STATES[:, :6400].reshape(-1, 1, 80, 80)
+        input: STATES[:, :40000].reshape(-1, 1, 200, 200)
         layers: 
           - conv2d: {out_channels: 32, kernel_size: 5, stride: 2, padding: 2}
           
@@ -24,10 +24,12 @@ models:
         activations: [elu, elu, elu]
         output: cnn_features  
 
-      # MLP处理状态向量 (后12维)
+      # MLP处理状态向量 (后13维)
       - name: state_processor
-        input: STATES[:, -12:]  # [20,12]
-        layers: [128, 64]
+        input: STATES[:, -13:]  # [20,13]
+        layers: 
+          - linear: 64
+          - linear: 64
         activations: elu
         output: state_features  
 
@@ -96,7 +98,7 @@ agent:
 # https://skrl.readthedocs.io/en/latest/api/trainers/sequential.html
 trainer:
   class: SequentialTrainer
-  timesteps: 20000
+  timesteps: 200000
   # timesteps: 4800
   environment_info: log
 

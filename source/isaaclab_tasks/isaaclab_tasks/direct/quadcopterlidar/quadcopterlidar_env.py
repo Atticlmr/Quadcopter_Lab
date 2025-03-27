@@ -68,7 +68,7 @@ class EventCfg:
     )
 
 @configclass
-class QuadcopterEnvCfg(DirectRLEnvCfg):
+class QuadcopterlidarEnvCfg(DirectRLEnvCfg):
     # env
     episode_length_s = 7.5
     dt= 1 / 50
@@ -187,10 +187,10 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     terminated_reward_scale = -200.0
 
 
-class QuadcopterEnv(DirectRLEnv):
-    cfg: QuadcopterEnvCfg
+class QuadcopterlidarEnv(DirectRLEnv):
+    cfg: QuadcopterlidarEnvCfg
 
-    def __init__(self, cfg: QuadcopterEnvCfg, render_mode: str | None = None, **kwargs):
+    def __init__(self, cfg: QuadcopterlidarEnvCfg, render_mode: str | None = None, **kwargs):
         super().__init__(cfg, render_mode, **kwargs)
 
         # Total thrust and moment applied to the base of the quadcopter
@@ -224,7 +224,6 @@ class QuadcopterEnv(DirectRLEnv):
         # Returns:
             # A tuple of lists containing the body indices and names.
 
-        # 20250326
         self._body_id, _ = self._robot.find_bodies("body")
         # self._body_id, _ = self._robot.find_bodies("body")[0]?
         self._undesired_contact_body_ids = SceneEntityCfg("contact_sensor", body_names=".*").body_ids
@@ -257,7 +256,7 @@ class QuadcopterEnv(DirectRLEnv):
     def _pre_physics_step(self, actions: torch.Tensor):
         self._actions = actions.clone().clamp(-2.0, 2.0) # 裁剪推力
         # 20250326
-        # self._actions = actions.clone().clamp(-1.0, 1.0)?
+        # self._actions = actions.clone().clamp(-1.0, 1.0)?保留疑问
         self._thrust[:, 0, 2] = self.cfg.thrust_to_weight * self._robot_weight * (self.cfg.thrust_scale * self._actions[:, 0] + 1.0) / 2.0
         self._moment[:, 0, :] = self.cfg.moment_scale * self._actions[:, 1:]
 
@@ -300,6 +299,7 @@ class QuadcopterEnv(DirectRLEnv):
             dim=-1,
         )
         observations = {"policy": obs}
+        # print("-------------------------------------\n" , obs.shape)
         return observations
 
     def _get_rewards(self) -> torch.Tensor:
@@ -524,7 +524,7 @@ class QuadcopterEnv(DirectRLEnv):
         self.goal_pos_visualizer.visualize(self._desired_pos_w)
 
 
-class QuadcopterEnvCfg_PLAY(QuadcopterEnvCfg):
+class QuadcopterEnvCfg_PLAY(QuadcopterlidarEnvCfg):
     
     def __post_init__(self):
         # post init of parent

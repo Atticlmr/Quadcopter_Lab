@@ -72,8 +72,8 @@ class SensorsSceneCfg(InteractiveSceneCfg):
     camera = CameraCfg(
         prim_path="{ENV_REGEX_NS}/Robot/base/front_cam",
         update_period=0.1,
-        height=480,
-        width=640,
+        height=20,
+        width=20,
         data_types=["rgb", "distance_to_image_plane"],
         spawn=sim_utils.PinholeCameraCfg(
             focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 1.0e5)
@@ -143,15 +143,16 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
         # print information from the sensors
         print("-------------------------------")
         print(scene["camera"])
-        print("Received shape of rgb   image: ", scene["camera"].data.output["rgb"].shape)
+        # print("Received shape of rgb   image: ", scene["camera"].data.output["rgb"].shape)
         print("Received shape of depth image: ", scene["camera"].data.output["distance_to_image_plane"].shape)
+        # print("Received tensor of depth image: \n", scene["camera"].data.output["distance_to_image_plane"])
         # print("flattened ", scene["camera"].data.output["distance_to_image_plane"].flatten().shape)
-        print("-------------------------------")
-        print(scene["height_scanner"])
-        print("Received max height value: ", torch.max(scene["height_scanner"].data.ray_hits_w[..., -1]).item())
-        print("-------------------------------")
-        print(scene["contact_forces"])
-        print("Received max contact force of: ", torch.max(scene["contact_forces"].data.net_forces_w).item())
+        # print("-------------------------------")
+        # print(scene["height_scanner"])
+        # print("Received max height value: ", torch.max(scene["height_scanner"].data.ray_hits_w[..., -1]).item())
+        # print("-------------------------------")
+        # print(scene["contact_forces"])
+        # print("Received max contact force of: ", torch.max(scene["contact_forces"].data.net_forces_w).item())
 
 
 def main():

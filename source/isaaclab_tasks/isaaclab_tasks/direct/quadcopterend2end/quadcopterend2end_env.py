@@ -4,25 +4,27 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 from __future__ import annotations
-
+import gymnasium as gym
 import math
 import torch
 from collections.abc import Sequence
 from isaaclab.envs.ui import BaseEnvWindow
 import isaaclab.sim as sim_utils
-from isaaclab.assets import Articulation
-from isaaclab.envs import DirectRLEnv
-from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
-from isaaclab.utils.math import sample_uniform
+
+from isaaclab.utils.math import subtract_frame_transforms, random_yaw_orientation
 import isaaclab.envs.mdp as mdp
-from isaaclab_assets.robots.cartpole import CARTPOLE_CFG
+
 from isaaclab.managers import EventTermCfg as EventTerm
-from isaaclab.assets import ArticulationCfg
-from isaaclab.envs import DirectRLEnvCfg
+from isaaclab.assets import ArticulationCfg,Articulation
+from isaaclab.envs import DirectRLEnvCfg, DirectRLEnv, ViewerCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import SimulationCfg
 from isaaclab.utils import configclass
 from isaaclab.managers import SceneEntityCfg
+from isaaclab.terrains import TerrainImporterCfg
+from isaaclab.sensors import TiledCameraCfg,TiledCamera,ContactSensor, ContactSensorCfg
+from isaaclab.utils.assets import NVIDIA_NUCLEUS_DIR
+from isaaclab.markers import VisualizationMarkers
 
 ##
 # Pre-defined configs
@@ -31,7 +33,7 @@ from isaaclab_assets import CRAZYFLIE_CFG  # isort: skip
 from isaaclab.markers import CUBOID_MARKER_CFG  # isort: skip
 from isaaclab.terrains.config import QUADCOPTER_ROUGH_TERRAINS_CFG_FACTORY
 
-class QuadcopterEnvWindow(BaseEnvWindow):
+class Quadcopterend2endEnvWindow(BaseEnvWindow):
     """Window manager for the Quadcopter environment."""
 
     def __init__(self, env: Quadcopterend2endEnv, window_name: str = "IsaacLab"):
@@ -74,34 +76,116 @@ class Quadcopterend2endEnvCfg(DirectRLEnvCfg):
     episode_length_s = 10.0
     # - spaces definition
     action_space = 4
-    observation_space = 6412
+    observation_space = 40013# 13 +200*200
     state_space = 0
     debug_vis = True
 
+    dt = 1/50
+
+    size_terrain = 25.0
+    objects_density_min = 0.17
+    objects_density_max = 0.7
+    random_respawn = False
+    avoid_reset_spikes_in_training = True
+
+    
+
+    ui_window_class_type = Quadcopterend2endEnvWindow
     # simulation
-    sim: SimulationCfg = SimulationCfg(dt=1 / 120, render_interval=decimation)
+    sim: SimulationCfg = SimulationCfg(
+        dt=dt,
+        render_interval=decimation,
+        physics_material=sim_utils.RigidBodyMaterialCfg(
+            friction_combine_mode="multiply",
+            restitution_combine_mode="multiply",
+            static_friction=1.0,
+            dynamic_friction=1.0,
+            restitution=0.0,
+        ),
+    )
+
+    # terrain generator
+    terrain = TerrainImporterCfg(
+        prim_path="/World/ground",
+        terrain_type="generator",
+        terrain_generator=QUADCOPTER_ROUGH_TERRAINS_CFG_FACTORY(
+            size=size_terrain, density_min=objects_density_min, density_max=objects_density_max),
+        max_init_terrain_level=None,
+        collision_group=-1,
+        physics_material=sim_utils.RigidBodyMaterialCfg(
+            friction_combine_mode="multiply",
+            restitution_combine_mode="multiply",
+            static_friction=1.0,
+            dynamic_friction=1.0,
+            restitution=0.0,
+        ),
+        visual_material=sim_utils.MdlFileCfg(
+            mdl_path=f"{NVIDIA_NUCLEUS_DIR}/Materials/Base/Architecture/Shingles_01.mdl",
+            project_uvw=True,
+        ),
+        debug_vis=False,
+    ) 
 
     # robot(s)
-    robot_cfg: ArticulationCfg = CARTPOLE_CFG.replace(prim_path="/World/envs/env_.*/Robot")
-
+    # change viewer settings
+    viewer = ViewerCfg(eye=(18.0, 18.0, 18.0), lookat=(6.5, 6.5, 0), resolution=(1280, 720))
+    # robot
+    robot: ArticulationCfg = CRAZYFLIE_CFG.replace(prim_path="/World/envs/env_.*/Robot").\
+                                           replace(spawn = CRAZYFLIE_CFG.spawn.replace(activate_contact_sensors=True))
+    # events
+    events: EventCfg = EventCfg()
     # scene
-    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=4096, env_spacing=4.0, replicate_physics=True)
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=4096, env_spacing=2.5, replicate_physics=True)
 
-    # custom parameters/scales
-    # - controllable joint
-    cart_dof_name = "slider_to_cart"
-    pole_dof_name = "cart_to_pole"
-    # - action scale
-    action_scale = 100.0  # [N]
-    # - reward scales
-    rew_scale_alive = 1.0
-    rew_scale_terminated = -2.0
-    rew_scale_pole_pos = -1.0
-    rew_scale_cart_vel = -0.01
-    rew_scale_pole_vel = -0.005
-    # - reset states/conditions
-    initial_pole_angle_range = [-0.25, 0.25]  # pole angle sample range on reset [rad]
-    max_cart_pos = 3.0  # reset if cart exceeds this position [m]
+    # sensor
+    tiled_camera: TiledCameraCfg = TiledCameraCfg(
+    prim_path="/World/envs/env_.*/Robot/body/camera",
+    offset=TiledCameraCfg.OffsetCfg(pos=(0.0, 0.0, 0.01), rot=(0.5, -0.5, 0.5, -0.5), convention="ros"),
+    data_types=["depth"],
+    spawn=sim_utils.PinholeCameraCfg(
+        focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 20.0)
+    ),
+    width=200,
+    height=200,)
+
+    contact_sensor: ContactSensorCfg = ContactSensorCfg(
+        prim_path="/World/envs/env_.*/Robot/.*", history_length=2, update_period= dt, # track_air_time=False
+    )
+
+    thrust_to_weight = 1.9
+    thrust_scale = 0.75
+    moment_scale = 0.01
+    
+    # task
+    desired_pos_w_height_limits = (2.0, 3.0)
+    desired_pos_b_xy_limits = (size_terrain/2-1.0, size_terrain/2)
+    desired_pos_b_obs_clip = 4.0
+    height_w_limits = (0.5, 4.5)
+    lin_vel_max_soft_thresh = 0
+    ang_vel_final_dist_goal_thresh = 0.3
+    progress_to_goal_std = math.sqrt(0.1)
+    distance_to_goal_std = math.sqrt(1.25)
+    distance_to_goal_fine_std = math.sqrt(0.3)
+    threshold_obstacle_proximity = 0.4
+    threshold_height_bounds_proximity = 0.3
+    height_w_soft_limits = (
+        height_w_limits[0] + threshold_height_bounds_proximity,
+        height_w_limits[1] - threshold_height_bounds_proximity)
+
+    # reward scales
+    lin_vel_reward_scale = -0.018
+    ang_vel_reward_scale = -0.06
+    ang_vel_final_reward_scale = -0.2
+    actions_reward_scale = -0.2
+    progress_to_goal_reward_scale = 2.0
+    distance_to_goal_reward_scale = 1.0
+    distance_to_goal_fine_reward_scale = 0.7
+    undesired_contacts_reward_scale = -4.0
+    flat_orientation_reward_scale = -1.0
+    obstacle_proximity_reward_scale = -6.0
+    height_bounds_proximity_reward_scale = -4.0
+    terminated_reward_scale = -200.0
+
 
 class Quadcopterend2endEnv(DirectRLEnv):
     cfg: Quadcopterend2endEnvCfg
@@ -109,109 +193,387 @@ class Quadcopterend2endEnv(DirectRLEnv):
     def __init__(self, cfg: Quadcopterend2endEnvCfg, render_mode: str | None = None, **kwargs):
         super().__init__(cfg, render_mode, **kwargs)
 
-        self._cart_dof_idx, _ = self.robot.find_joints(self.cfg.cart_dof_name)
-        self._pole_dof_idx, _ = self.robot.find_joints(self.cfg.pole_dof_name)
+        # Total thrust and moment applied to the base of the quadcopter
+        self._actions = torch.zeros(self.num_envs, gym.spaces.flatdim(self.single_action_space), device=self.device)
+        self._thrust = torch.zeros(self.num_envs, 1, 3, device=self.device)
+        self._moment = torch.zeros(self.num_envs, 1, 3, device=self.device)
+        # Goal position
+        self._desired_pos_w = torch.zeros(self.num_envs, 3, device=self.device)
+        self.prev_pos_w = torch.zeros(self.num_envs, 3, device=self.device)
 
-        self.joint_pos = self.robot.data.joint_pos
-        self.joint_vel = self.robot.data.joint_vel
+        # Logging
+        self._episode_sums = {
+            key: torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
+            for key in [
+                "lin_vel",
+                "ang_vel",
+                "ang_vel_final",
+                "actions",
+                "progress_to_goal",
+                "distance_to_goal",
+                "distance_to_goal_fine",
+                "undesired_contacts",
+                "flat_orientation",
+                "obstacle_proximity",
+                "height_bounds_proximity",
+                "terminated",
+            ]
+        }
+        
+        # Get specific body indices
+        # find_bodys: 
+        # Returns:
+            # A tuple of lists containing the body indices and names.
+
+        self._body_id, _ = self._robot.find_bodies("body")
+        # self._body_id, _ = self._robot.find_bodies("body")[0]?
+        self._undesired_contact_body_ids = SceneEntityCfg("contact_sensor", body_names=".*").body_ids
+        self._robot_mass = self._robot.root_physx_view.get_masses()[0].sum()
+        self._gravity_magnitude = torch.tensor(self.sim.cfg.gravity, device=self.device).norm()
+        self._robot_weight = (self._robot_mass * self._gravity_magnitude).item()
+
+        # add handle for debug visualization (this is set to a valid handle inside set_debug_vis)
+        self.set_debug_vis(self.cfg.debug_vis)
+
+
 
     def _setup_scene(self):
-        self.robot = Articulation(self.cfg.robot_cfg)
-        # add ground plane
-        spawn_ground_plane(prim_path="/World/ground", cfg=GroundPlaneCfg())
-        # clone and replicate
+        self._robot = Articulation(self.cfg.robot)
+        self.scene.articulations["robot"] = self._robot
+        # lidar
+        self._contact_sensor = ContactSensor(self.cfg.contact_sensor)
+        self.scene.sensors["contact_sensor"] = self._contact_sensor
+        self._tiledcamera = TiledCamera(self.cfg.tiled_camera)
+        self.scene.sensors["tiled_camera"] = self._tiledcamera
+
+        self.cfg.terrain.num_envs = self.scene.cfg.num_envs
+        self.cfg.terrain.env_spacing = self.scene.cfg.env_spacing
+        self._terrain = self.cfg.terrain.class_type(self.cfg.terrain)
+        # clone, filter, and replicate
         self.scene.clone_environments(copy_from_source=False)
-        # add articulation to scene
-        self.scene.articulations["robot"] = self.robot
+        self.scene.filter_collisions(global_prim_paths=[self.cfg.terrain.prim_path])
         # add lights
         light_cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
         light_cfg.func("/World/Light", light_cfg)
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
-        self.actions = actions.clone()
+        self._actions = actions.clone().clamp(-1.0, 1.0)
+        self._thrust[:, 0, 2] = self.cfg.thrust_to_weight * self._robot_weight * (self._actions[:, 0] + 1.0) / 2.0
+        self._moment[:, 0, :] = self.cfg.moment_scale * self._actions[:, 1:]
 
     def _apply_action(self) -> None:
-        self.robot.set_joint_effort_target(self.actions * self.cfg.action_scale, joint_ids=self._cart_dof_idx)
+        self.prev_pos_w = self._robot.data.root_link_pos_w.clone()
+        self._robot.set_external_force_and_torque(self._thrust, self._moment, body_ids=self._body_id)
 
     def _get_observations(self) -> dict:
+        # b 代表body ，w 代表world subtract_frame_transforms把两者互相转换
+        desired_pos_b, _ = subtract_frame_transforms(
+            self._robot.data.root_link_state_w[:, :3], self._robot.data.root_link_state_w[:, 3:7], self._desired_pos_w
+        )
+        noisy_desired_pos_b = self._add_uniform_noise(desired_pos_b, -0.02, 0.02)
+        noisy_desired_pos_b = (noisy_desired_pos_b / self.cfg.desired_pos_b_obs_clip).clip(-1.0, 1.0)
+        height = self._robot.data.root_state_w[:, 2].unsqueeze(1)
+        noisy_height = self._add_uniform_noise(height, -0.02, 0.02)
+        noisy_height /= self.cfg.height_w_limits[1]
+
+        # depth_image
+        depth_image = self._tiledcamera.data.output["depth"].reshape(self.num_envs, -1)  # (num_envs, height * width)
+        
+        
+        noisy_root_lin_vel = self._add_uniform_noise(self._robot.data.root_com_lin_vel_b, -0.2, 0.2)
+        noisy_root_ang_vel = self._add_uniform_noise(self._robot.data.root_com_ang_vel_b, -0.1, 0.1)
+        noisy_projected_gravity_b = self._add_uniform_noise(self._robot.data.projected_gravity_b, -0.03, 0.03)
+        
+        # add uniform noise
         obs = torch.cat(
-            (
-                self.joint_pos[:, self._pole_dof_idx[0]].unsqueeze(dim=1),
-                self.joint_vel[:, self._pole_dof_idx[0]].unsqueeze(dim=1),
-                self.joint_pos[:, self._cart_dof_idx[0]].unsqueeze(dim=1),
-                self.joint_vel[:, self._cart_dof_idx[0]].unsqueeze(dim=1),
-            ),
+            [
+                depth_image,
+                noisy_root_lin_vel,
+                noisy_root_ang_vel,
+                noisy_projected_gravity_b,
+                noisy_height,
+                noisy_desired_pos_b,
+            ],
             dim=-1,
         )
         observations = {"policy": obs}
+        # print("-------------------------------------\n" , obs.shape)
         return observations
-
     def _get_rewards(self) -> torch.Tensor:
-        total_reward = compute_rewards(
-            self.cfg.rew_scale_alive,
-            self.cfg.rew_scale_terminated,
-            self.cfg.rew_scale_pole_pos,
-            self.cfg.rew_scale_cart_vel,
-            self.cfg.rew_scale_pole_vel,
-            self.joint_pos[:, self._pole_dof_idx[0]],
-            self.joint_vel[:, self._pole_dof_idx[0]],
-            self.joint_pos[:, self._cart_dof_idx[0]],
-            self.joint_vel[:, self._cart_dof_idx[0]],
-            self.reset_terminated,
+        
+         # base velocities
+        root_lin_vel_processed = self._robot.data.root_com_lin_vel_b.clone()
+        root_lin_vel_processed[:, 0] *= torch.where(root_lin_vel_processed[:, 0] < -1.0, 2, 1)
+        root_lin_vel_processed[:, 1] *= torch.where(torch.abs(root_lin_vel_processed[:, 1]) > 2.0, 2, 1)
+        lin_vel = torch.sum(torch.square(root_lin_vel_processed), dim=1)
+
+        lin_vel = torch.where(torch.linalg.norm(root_lin_vel_processed, dim=1) > self.cfg.lin_vel_max_soft_thresh,
+                              lin_vel + self.cfg.lin_vel_max_soft_thresh**2 - 2*(lin_vel**0.5)*self.cfg.lin_vel_max_soft_thresh,
+                              torch.zeros_like(lin_vel))
+        ang_vel = torch.sum(torch.square(self._robot.data.root_com_ang_vel_b), dim=1)
+        # actions
+        actions = torch.sum(torch.abs(self._actions), dim=1)
+
+        # distance to goal task
+        desired_pos_b, _ = subtract_frame_transforms(
+            self._robot.data.root_state_w[:, :3], self._robot.data.root_state_w[:, 3:7], self._desired_pos_w
         )
-        return total_reward
+        prev_distance_to_goal = torch.linalg.norm(self._desired_pos_w - self.prev_pos_w, dim=1)
+        distance_to_goal = torch.linalg.norm(self._desired_pos_w - self._robot.data.root_link_pos_w, dim=1)
+        
+        progress_to_goal_mapped = -torch.tanh((distance_to_goal-prev_distance_to_goal) / (self.cfg.progress_to_goal_std**2))
+        
+        distance_to_goal_mapped = 1 - torch.tanh(distance_to_goal / (self.cfg.distance_to_goal_std**2))
+        distance_to_goal_mapped_fine = 1 - torch.tanh(distance_to_goal / (self.cfg.distance_to_goal_fine_std**2))
+
+        desired_pos_b_clipped = (desired_pos_b / self.cfg.desired_pos_b_obs_clip).clip(-1.0, 1.0)
+        
+        # close_to_goal True for every env for which the desired_pos_b_clipped is within the limits
+        close_to_goal = torch.logical_and(torch.all(-0.99 < desired_pos_b_clipped, dim=1), torch.all(desired_pos_b_clipped < 0.99, dim=1))
+        distance_to_goal_mapped = torch.where(
+            close_to_goal, distance_to_goal_mapped, torch.zeros_like(distance_to_goal_mapped))
+        distance_to_goal_mapped_fine =torch.where(
+            close_to_goal, distance_to_goal_mapped_fine, torch.zeros_like(distance_to_goal_mapped_fine))
+
+        # undesired contacts
+        ang_vel_final = torch.where(distance_to_goal < self.cfg.ang_vel_final_dist_goal_thresh, ang_vel, torch.zeros_like(ang_vel))
+        net_contact_forces = self._contact_sensor.data.net_forces_w_history
+        is_contact = (
+            torch.max(torch.norm(net_contact_forces[:, :, self._undesired_contact_body_ids], dim=-1), dim=1)[0] > 0.01
+        )
+        undesired_contacts = torch.sum(is_contact, dim=1)
+
+        # flat orientation
+        flat_orientation = torch.sum(torch.square(self._robot.data.projected_gravity_b[:, :2]), dim=1)
+         
+        # 获取深度图（假设形状为 [num_envs, height, width]）
+        depth_image = self._tiledcamera.data.output["depth"]  # (num_envs, H, W)
+
+        # 将无效值（如NaN或0）替换为inf（表示无障碍物）
+        depth_image = torch.nan_to_num(depth_image, nan=float('inf'))
+        depth_image = torch.where(depth_image <= 0, float('inf'), depth_image)
+
+        # 计算每个环境中最小的深度值（最近障碍物）
+        min_depth = torch.amin(depth_image, dim=(1, 2)).squeeze(-1)  # (num_envs,)
+
+        # 计算障碍物接近惩罚
+        # 指数衰减惩罚核心公式
+        obstacle_decay_scale = 0.37
+        obstacle_proximity = torch.exp(
+            -min_depth / obstacle_decay_scale  # 衰减系数控制曲线陡峭度
+        )
+        # obstacle_proximity = torch.where(
+        #     min_depth < self.cfg.threshold_obstacle_proximity,
+        #     self.cfg.threshold_obstacle_proximity - min_depth,
+        #     torch.zeros_like(min_depth))
+        
+
+        # too close to height bounds
+        height_low_bound_proximity = torch.where(self._robot.data.root_state_w[:, 2] < self.cfg.height_w_soft_limits[0],
+                                                self.cfg.height_w_soft_limits[0] - self._robot.data.root_state_w[:, 2],
+                                                torch.zeros_like(self._robot.data.root_state_w[:, 2]))
+        height_high_bound_proximity = torch.where(self._robot.data.root_state_w[:, 2] > self.cfg.height_w_soft_limits[1],
+                                                self._robot.data.root_state_w[:, 2] - self.cfg.height_w_soft_limits[1],
+                                                torch.zeros_like(self._robot.data.root_state_w[:, 2]))
+        height_bounds_proximity = torch.max(height_low_bound_proximity, height_high_bound_proximity)
+
+        rewards = {
+            "lin_vel": lin_vel * self.cfg.lin_vel_reward_scale * self.step_dt,
+            "ang_vel": ang_vel * self.cfg.ang_vel_reward_scale * self.step_dt,
+            "ang_vel_final": ang_vel_final * self.cfg.ang_vel_final_reward_scale * self.step_dt,
+            "actions": actions * self.cfg.actions_reward_scale * self.step_dt,
+            "progress_to_goal": progress_to_goal_mapped * self.cfg.progress_to_goal_reward_scale * self.step_dt,
+            "distance_to_goal": distance_to_goal_mapped * self.cfg.distance_to_goal_reward_scale * self.step_dt,
+            "distance_to_goal_fine": distance_to_goal_mapped_fine * self.cfg.distance_to_goal_fine_reward_scale * self.step_dt,
+            "undesired_contacts": undesired_contacts * self.cfg.undesired_contacts_reward_scale * self.step_dt,
+            "flat_orientation": flat_orientation * self.cfg.flat_orientation_reward_scale * self.step_dt,
+            "obstacle_proximity": obstacle_proximity * self.cfg.obstacle_proximity_reward_scale * self.step_dt,
+            "height_bounds_proximity": height_bounds_proximity * self.cfg.height_bounds_proximity_reward_scale * self.step_dt,
+            "terminated": self.reset_terminated * self.cfg.terminated_reward_scale * self.step_dt,
+        }
+        reward = torch.sum(torch.stack(list(rewards.values())), dim=0)
+
+        reward = torch.sum(torch.stack(list(rewards.values())), dim=0)
+        # Logging
+        for key, value in rewards.items():
+            self._episode_sums[key] += value
+        return reward
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
-        self.joint_pos = self.robot.data.joint_pos
-        self.joint_vel = self.robot.data.joint_vel
-
         time_out = self.episode_length_buf >= self.max_episode_length - 1
-        out_of_bounds = torch.any(torch.abs(self.joint_pos[:, self._cart_dof_idx]) > self.cfg.max_cart_pos, dim=1)
-        out_of_bounds = out_of_bounds | torch.any(torch.abs(self.joint_pos[:, self._pole_dof_idx]) > math.pi / 2, dim=1)
-        return out_of_bounds, time_out
+        out_of_height_bounds = torch.logical_or(
+                self._robot.data.root_link_pos_w[:, 2] < self.cfg.height_w_limits[0],
+                self._robot.data.root_link_pos_w[:, 2] > self.cfg.height_w_limits[1])
+        net_contact_forces = self._contact_sensor.data.net_forces_w_history
+        collided = torch.any(torch.max(torch.norm(net_contact_forces[:, :, self._undesired_contact_body_ids],
+                                           dim=-1), dim=1)[0] > 0.0001, dim=1)
+        died = torch.logical_or(out_of_height_bounds, collided)
+        return died, time_out
+    
+    def _add_uniform_noise(self, data: torch.Tensor, min_noise: float, max_noise: float):
+        return data + torch.rand_like(data) * (max_noise - min_noise) + min_noise
+    
+    def _sample_points_square_hole(self, n: int, side_length: float, hole_length: float):
+        
+        indices = torch.arange(n, device=self.device)
+        shuffled_indices = indices[torch.randperm(n)]
+        # Calculate the size of each split
+        split_sizes = [n // 4] * 4
+        for i in range(n % 4):
+            split_sizes[i] += 1  # Distribute the remainder among the first splits
+        
+        # Split the shuffled tensor into 4 parts
+        idx_splits = torch.split(shuffled_indices, split_sizes)
+        
+        points = torch.empty(n, 2, device=self.device)
+        # Half sizes for convenience
+        half_s, half_h = side_length / 2, hole_length / 2
+
+        # Sampling from each region
+        # Region 1: Top rectangle
+        points[idx_splits[0]] = torch.stack([
+            torch.empty(len(idx_splits[0]), device=self.device).uniform_(-half_h, half_s),       # x-coordinates
+            torch.empty(len(idx_splits[0]), device=self.device).uniform_(half_h, half_s)         # y-coordinates (above the hole)
+        ], dim=1)
+        
+        # Region 2: Bottom rectangle
+        points[idx_splits[1]] = torch.stack([
+            torch.empty(len(idx_splits[1]), device=self.device).uniform_(-half_s, half_h),
+            torch.empty(len(idx_splits[1]), device=self.device).uniform_(-half_s, -half_h)       # y-coordinates (below the hole)
+        ], dim=1)
+        
+        # Region 3: Left rectangle
+        points[idx_splits[2]] = torch.stack([
+            torch.empty(len(idx_splits[2]), device=self.device).uniform_(-half_s, -half_h),      # x-coordinates (left of the hole)
+            torch.empty(len(idx_splits[2]), device=self.device).uniform_(-half_h, half_s)        # y-coordinates
+        ], dim=1)
+        
+        # Region 4: Right rectangle
+        points[idx_splits[3]] = torch.stack([
+            torch.empty(len(idx_splits[3]), device=self.device).uniform_(half_h, half_s), # x-coordinates (right of the hole)
+            torch.empty(len(idx_splits[3]), device=self.device).uniform_(-half_s, half_h)
+        ], dim=1)
+        
+        return points
+
+
+
 
     def _reset_idx(self, env_ids: Sequence[int] | None):
-        if env_ids is None:
-            env_ids = self.robot._ALL_INDICES
-        super()._reset_idx(env_ids)
+        if env_ids is None or len(env_ids) == self.num_envs:
+            env_ids = self._robot._ALL_INDICES
 
-        joint_pos = self.robot.data.default_joint_pos[env_ids]
-        joint_pos[:, self._pole_dof_idx] += sample_uniform(
-            self.cfg.initial_pole_angle_range[0] * math.pi,
-            self.cfg.initial_pole_angle_range[1] * math.pi,
-            joint_pos[:, self._pole_dof_idx].shape,
-            joint_pos.device,
+        # Logging
+        distances_to_goal = torch.linalg.norm(
+            self._desired_pos_w[env_ids] - self._robot.data.root_link_pos_w[env_ids], dim=1
         )
-        joint_vel = self.robot.data.default_joint_vel[env_ids]
+        final_distance_to_goal = distances_to_goal.mean()
+        final_distance_to_goal_10_percentile = torch.quantile(distances_to_goal, 0.10, interpolation="linear")
+        final_distance_to_goal_90_percentile = torch.quantile(distances_to_goal, 0.90, interpolation="linear")
+        idxs = torch.argwhere(distances_to_goal <= final_distance_to_goal_10_percentile + 1e-4).flatten()
+        final_ang_vel_distance_to_goal_10_percentile = torch.abs(self._robot.data.root_com_ang_vel_b[idxs]).mean()
+        extras = dict()
+        for key in self._episode_sums.keys():
+            episodic_sum_avg = torch.mean(self._episode_sums[key][env_ids])
+            extras["Episode_Reward/" + key] = episodic_sum_avg / self.max_episode_length_s
+            self._episode_sums[key][env_ids] = 0.0
+        self.extras["log"] = dict()
+        self.extras["log"].update(extras)
+        extras = dict()
+        extras["Episode_Termination/died"] = torch.count_nonzero(self.reset_terminated[env_ids]).item()
+        extras["Episode_Termination/time_out"] = torch.count_nonzero(self.reset_time_outs[env_ids]).item()
+        extras["Metrics/final_distance_to_goal"] = final_distance_to_goal.item()
+        extras["Metrics/final_distance_to_goal_10_percentile"] = final_distance_to_goal_10_percentile.item()
+        extras["Metrics/final_distance_to_goal_90_percentile"] = final_distance_to_goal_90_percentile.item()
+        extras["Metrics/final_ang_vel_goal_10_percentile"] = final_ang_vel_distance_to_goal_10_percentile.item()
+        self.extras["log"].update(extras)
 
-        default_root_state = self.robot.data.default_root_state[env_ids]
-        default_root_state[:, :3] += self.scene.env_origins[env_ids]
+        self._robot.reset(env_ids)
+        super()._reset_idx(env_ids)
+        if self.cfg.avoid_reset_spikes_in_training and len(env_ids) == self.num_envs:
+            # Spread out the resets to avoid spikes in training when many environments reset at a similar time
+            self.episode_length_buf = torch.randint_like(self.episode_length_buf, high=int(self.max_episode_length))
 
-        self.joint_pos[env_ids] = joint_pos
-        self.joint_vel[env_ids] = joint_vel
+        self._actions[env_ids] = 0.0
+        # Sample new commands
+        self._desired_pos_w[env_ids, :2] = self._sample_points_square_hole(len(env_ids),
+            2*self.cfg.desired_pos_b_xy_limits[1], 2*self.cfg.desired_pos_b_xy_limits[0])
+        if self.cfg.random_respawn:
+            rand_terrain_value = torch.rand(len(env_ids), device=self.device)
+            move_up = rand_terrain_value < 0.33
+            move_down = rand_terrain_value > 0.66
+            # update terrain levels
+            self._terrain.update_env_origins(env_ids, move_up, move_down)
+        self._desired_pos_w[env_ids, :2] += self._terrain.env_origins[env_ids, :2]
+        self._desired_pos_w[env_ids, 2] = self._desired_pos_w[env_ids, 2].uniform_(
+                self.cfg.desired_pos_w_height_limits[0], self.cfg.desired_pos_w_height_limits[1])
+        # Reset robot state
+        joint_pos = self._robot.data.default_joint_pos[env_ids]
+        joint_vel = self._robot.data.default_joint_vel[env_ids]
+        default_root_state = self._robot.data.default_root_state[env_ids]
+        default_root_state[:, 2] = (2*torch.rand_like(default_root_state[:, 2])-1) * \
+            0.25*(self.cfg.height_w_limits[1] - self.cfg.height_w_limits[0]) + \
+                (self.cfg.height_w_limits[1] - self.cfg.height_w_limits[0]) / 2.0
+        default_root_state[:, :2] += self._terrain.env_origins[env_ids, :2]
+        # apply random yaw
+        default_root_state[:, 3:7] = random_yaw_orientation(default_root_state.shape[0], device=self.device)
+        self._robot.write_root_link_pose_to_sim(default_root_state[:, :7], env_ids)
+        self._robot.write_root_com_velocity_to_sim(default_root_state[:, 7:], env_ids)
+        self._robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
+    
+    def _set_debug_vis_impl(self, debug_vis: bool):
+        # create markers if necessary for the first tome
+        if debug_vis:
+            if not hasattr(self, "goal_pos_visualizer"):
+                marker_cfg = CUBOID_MARKER_CFG.copy()
+                marker_cfg.markers["cuboid"].size = (0.05, 0.05, 0.05)
+                # -- goal pose
+                marker_cfg.prim_path = "/Visuals/Command/goal_position"
+                self.goal_pos_visualizer = VisualizationMarkers(marker_cfg)
+            # set their visibility to true
+            self.goal_pos_visualizer.set_visibility(True)
+        else:
+            if hasattr(self, "goal_pos_visualizer"):
+                self.goal_pos_visualizer.set_visibility(False)
 
-        self.robot.write_root_pose_to_sim(default_root_state[:, :7], env_ids)
-        self.robot.write_root_velocity_to_sim(default_root_state[:, 7:], env_ids)
-        self.robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
+    def _debug_vis_callback(self, event):
+        # update the markers
+        self.goal_pos_visualizer.visualize(self._desired_pos_w)
 
 
-@torch.jit.script
-def compute_rewards(
-    rew_scale_alive: float,
-    rew_scale_terminated: float,
-    rew_scale_pole_pos: float,
-    rew_scale_cart_vel: float,
-    rew_scale_pole_vel: float,
-    pole_pos: torch.Tensor,
-    pole_vel: torch.Tensor,
-    cart_pos: torch.Tensor,
-    cart_vel: torch.Tensor,
-    reset_terminated: torch.Tensor,
-):
-    rew_alive = rew_scale_alive * (1.0 - reset_terminated.float())
-    rew_termination = rew_scale_terminated * reset_terminated.float()
-    rew_pole_pos = rew_scale_pole_pos * torch.sum(torch.square(pole_pos).unsqueeze(dim=1), dim=-1)
-    rew_cart_vel = rew_scale_cart_vel * torch.sum(torch.abs(cart_vel).unsqueeze(dim=1), dim=-1)
-    rew_pole_vel = rew_scale_pole_vel * torch.sum(torch.abs(pole_vel).unsqueeze(dim=1), dim=-1)
-    total_reward = rew_alive + rew_termination + rew_pole_pos + rew_cart_vel + rew_pole_vel
-    return total_reward
+
+class QuadcopterEnvCfg_PLAY(Quadcopterend2endEnvCfg):
+    
+    def __post_init__(self):
+        # post init of parent
+        super().__post_init__()
+    
+        self.episode_length_s *= 4
+        self.size_terrain *= 4
+        self.objects_density_min *= 1
+        self.objects_density_max *= 0.8
+        self.desired_pos_b_xy_limits = (self.size_terrain/2-1.0, self.size_terrain/2)
+        self.random_respawn = True
+        self.avoid_reset_spikes_in_training = False
+        
+        self.terrain = TerrainImporterCfg(
+            prim_path="/World/ground",
+            terrain_type="generator",
+            terrain_generator=QUADCOPTER_ROUGH_TERRAINS_CFG_FACTORY(
+                size=self.size_terrain, density_min=self.objects_density_min,
+                density_max=self.objects_density_max, num_rows=5, num_cols=5),
+            max_init_terrain_level=None,
+            collision_group=-1,
+            physics_material=sim_utils.RigidBodyMaterialCfg(
+                friction_combine_mode="multiply",
+                restitution_combine_mode="multiply",
+                static_friction=1.0,
+                dynamic_friction=1.0,
+                restitution=0.0,
+            ),
+            visual_material=sim_utils.MdlFileCfg(
+                mdl_path=f"{NVIDIA_NUCLEUS_DIR}/Materials/Base/Architecture/Shingles_01.mdl",
+                project_uvw=True,
+            ),
+            debug_vis=False,
+        )

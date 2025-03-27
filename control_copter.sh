@@ -1,5 +1,6 @@
 ./isaaclab.sh -p scripts/reinforcement_learning/skrl/train.py \
---task=Isaac-Quadcopter-Direct-v0 \
+--task=Isaac-Quadcopterend2end-Direct-v0 \
 --headless \
 --enable_cameras \
---num_envs 20
+--num_envs 200\
+--info 
