@@ -2,5 +2,4 @@
 --task=Isaac-Quadcopterend2end-Direct-v0 \
 --headless \
 --enable_cameras \
---num_envs 200\
---info 
+--num_envs 100 \
