@@ -4,27 +4,28 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 from __future__ import annotations
-import gymnasium as gym
+
 import math
 import torch
-from collections.abc import Sequence
-from isaaclab.envs.ui import BaseEnvWindow
+import gymnasium as gym
+
 import isaaclab.sim as sim_utils
-
-from isaaclab.utils.math import subtract_frame_transforms, random_yaw_orientation
-import isaaclab.envs.mdp as mdp
-
-from isaaclab.managers import EventTermCfg as EventTerm
-from isaaclab.assets import ArticulationCfg,Articulation
-from isaaclab.envs import DirectRLEnvCfg, DirectRLEnv, ViewerCfg
-from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import SimulationCfg
-from isaaclab.utils import configclass
+from isaaclab.assets import Articulation, ArticulationCfg
+from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.envs import DirectRLEnv,  DirectRLEnvCfg, ViewerCfg
+# from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
+# from isaaclab.utils.math import sample_uniform
 from isaaclab.managers import SceneEntityCfg
-from isaaclab.terrains import TerrainImporterCfg
-from isaaclab.sensors import TiledCameraCfg,TiledCamera,ContactSensor, ContactSensorCfg
-from isaaclab.utils.assets import NVIDIA_NUCLEUS_DIR
+import isaaclab.envs.mdp as mdp
+from isaaclab.envs.ui import BaseEnvWindow
+from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.markers import VisualizationMarkers
+from isaaclab.utils import configclass
+from isaaclab.sensors import ContactSensor, ContactSensorCfg, RayCaster, RayCasterCfg, patterns,TiledCameraCfg,TiledCamera
+from isaaclab.utils.assets import NVIDIA_NUCLEUS_DIR
+from isaaclab.utils.math import subtract_frame_transforms, random_yaw_orientation
+from isaaclab.terrains import TerrainImporterCfg
 
 ##
 # Pre-defined configs
@@ -54,10 +55,7 @@ class Quadcopterend2endEnvWindow(BaseEnvWindow):
 
 @configclass
 class EventCfg:
-    """
-    Configuration for randomization.
-    域随机化 随机质量
-    """
+    """Configuration for randomization."""
 
     add_body_mass = EventTerm(
         func=mdp.randomize_rigid_body_mass,
@@ -72,15 +70,13 @@ class EventCfg:
 @configclass
 class Quadcopterend2endEnvCfg(DirectRLEnvCfg):
     # env
+    episode_length_s = 7.5
+    dt= 1 / 50
     decimation = 2
-    episode_length_s = 10.0
-    # - spaces definition
     action_space = 4
-    observation_space = 40013# 13 +200*200
+    observation_space = 59
     state_space = 0
     debug_vis = True
-
-    dt = 1/50
 
     size_terrain = 25.0
     objects_density_min = 0.17
@@ -88,13 +84,13 @@ class Quadcopterend2endEnvCfg(DirectRLEnvCfg):
     random_respawn = False
     avoid_reset_spikes_in_training = True
 
-    
-
     ui_window_class_type = Quadcopterend2endEnvWindow
+
     # simulation
     sim: SimulationCfg = SimulationCfg(
         dt=dt,
         render_interval=decimation,
+        # disable_contact_processing=True,
         physics_material=sim_utils.RigidBodyMaterialCfg(
             friction_combine_mode="multiply",
             restitution_combine_mode="multiply",
@@ -103,8 +99,7 @@ class Quadcopterend2endEnvCfg(DirectRLEnvCfg):
             restitution=0.0,
         ),
     )
-
-    # terrain generator
+    
     terrain = TerrainImporterCfg(
         prim_path="/World/ground",
         terrain_type="generator",
@@ -124,34 +119,51 @@ class Quadcopterend2endEnvCfg(DirectRLEnvCfg):
             project_uvw=True,
         ),
         debug_vis=False,
-    ) 
+    )
 
-    # robot(s)
     # change viewer settings
     viewer = ViewerCfg(eye=(18.0, 18.0, 18.0), lookat=(6.5, 6.5, 0), resolution=(1280, 720))
+
+    # scene
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=4096, env_spacing=2.5, replicate_physics=True)
+    
+    #events
+    events: EventCfg = EventCfg()
+
     # robot
     robot: ArticulationCfg = CRAZYFLIE_CFG.replace(prim_path="/World/envs/env_.*/Robot").\
                                            replace(spawn = CRAZYFLIE_CFG.spawn.replace(activate_contact_sensors=True))
-    # events
-    events: EventCfg = EventCfg()
-    # scene
-    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=4096, env_spacing=2.5, replicate_physics=True)
+    simple_lidar = RayCasterCfg(
+        prim_path="/World/envs/env_.*/Robot/body",
+        update_period= dt * decimation,
+        offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 0.01)),
+        max_distance=15,
+        attach_yaw_only=False,
+        pattern_cfg=patterns.LidarPatternCfg(channels=1, vertical_fov_range=(-0.0, 0.0), 
+                                             horizontal_fov_range=(-90.0, 90.0),
+                                             horizontal_res=3.99),
+        debug_vis=False,
+        mesh_prim_paths=["/World/ground"],
+    )
+    scaling_lidar_data_b = 1/6.0
 
-    # sensor
+    # depth camera
     tiled_camera: TiledCameraCfg = TiledCameraCfg(
     prim_path="/World/envs/env_.*/Robot/body/camera",
-    offset=TiledCameraCfg.OffsetCfg(pos=(0.0, 0.0, 0.01), rot=(0.5, -0.5, 0.5, -0.5), convention="ros"),
+    offset=TiledCameraCfg.OffsetCfg(pos=(0.0, 0.0, 0.01)),
     data_types=["depth"],
     spawn=sim_utils.PinholeCameraCfg(
         focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 20.0)
     ),
-    width=200,
-    height=200,)
+    width=80,
+    height=80,)
 
     contact_sensor: ContactSensorCfg = ContactSensorCfg(
         prim_path="/World/envs/env_.*/Robot/.*", history_length=2, update_period= dt, # track_air_time=False
     )
-
+    # contact_forces = ContactSensorCfg(
+    #     prim_path="{ENV_REGEX_NS}/Robot/.*_FOOT", update_period=0.0, history_length=6, debug_vis=True
+    # )
     thrust_to_weight = 1.9
     thrust_scale = 0.75
     moment_scale = 0.01
@@ -219,7 +231,6 @@ class Quadcopterend2endEnv(DirectRLEnv):
                 "terminated",
             ]
         }
-        
         # Get specific body indices
         # find_bodys: 
         # Returns:
@@ -235,14 +246,17 @@ class Quadcopterend2endEnv(DirectRLEnv):
         # add handle for debug visualization (this is set to a valid handle inside set_debug_vis)
         self.set_debug_vis(self.cfg.debug_vis)
 
-
-
     def _setup_scene(self):
         self._robot = Articulation(self.cfg.robot)
         self.scene.articulations["robot"] = self._robot
         # lidar
         self._contact_sensor = ContactSensor(self.cfg.contact_sensor)
         self.scene.sensors["contact_sensor"] = self._contact_sensor
+        self._simple_lidar = RayCaster(self.cfg.simple_lidar)
+        self.scene.sensors["simple_lidar"] = self._simple_lidar
+
+        # self._tiledcamera = TiledCamera(self.cfg.tiled_camera)
+        # self.scene.sensors["tiled_camera"] = self._tiledcamera
         self._tiledcamera = TiledCamera(self.cfg.tiled_camera)
         self.scene.sensors["tiled_camera"] = self._tiledcamera
 
@@ -256,17 +270,18 @@ class Quadcopterend2endEnv(DirectRLEnv):
         light_cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
         light_cfg.func("/World/Light", light_cfg)
 
-    def _pre_physics_step(self, actions: torch.Tensor) -> None:
-        self._actions = actions.clone().clamp(-1.0, 1.0)
-        self._thrust[:, 0, 2] = self.cfg.thrust_to_weight * self._robot_weight * (self._actions[:, 0] + 1.0) / 2.0
+    def _pre_physics_step(self, actions: torch.Tensor):
+        self._actions = actions.clone().clamp(-2.0, 2.0) # 裁剪推力
+        # 20250326
+        # self._actions = actions.clone().clamp(-1.0, 1.0)?保留疑问
+        self._thrust[:, 0, 2] = self.cfg.thrust_to_weight * self._robot_weight * (self.cfg.thrust_scale * self._actions[:, 0] + 1.0) / 2.0
         self._moment[:, 0, :] = self.cfg.moment_scale * self._actions[:, 1:]
 
-    def _apply_action(self) -> None:
+    def _apply_action(self):
         self.prev_pos_w = self._robot.data.root_link_pos_w.clone()
         self._robot.set_external_force_and_torque(self._thrust, self._moment, body_ids=self._body_id)
 
     def _get_observations(self) -> dict:
-        # b 代表body ，w 代表world subtract_frame_transforms把两者互相转换
         desired_pos_b, _ = subtract_frame_transforms(
             self._robot.data.root_link_state_w[:, :3], self._robot.data.root_link_state_w[:, 3:7], self._desired_pos_w
         )
@@ -275,49 +290,55 @@ class Quadcopterend2endEnv(DirectRLEnv):
         height = self._robot.data.root_state_w[:, 2].unsqueeze(1)
         noisy_height = self._add_uniform_noise(height, -0.02, 0.02)
         noisy_height /= self.cfg.height_w_limits[1]
-
-        # depth_image
-        depth_image = self._tiledcamera.data.output["depth"].reshape(self.num_envs, -1)  # (num_envs, height * width)
-        
+        # create a self._simple_lidar.data.ray_hits_w.shape tensor and store repeated root state
+        root_state_w = self._robot.data.root_state_w.unsqueeze(1).repeat(1, self._simple_lidar.data.ray_hits_w.shape[1], 1)
+        simple_lidar_data_ray_hits_b, _ = subtract_frame_transforms(
+            root_state_w[..., :3], root_state_w[..., 3:7], self._simple_lidar.data.ray_hits_w)
+        # obtain the distance to the lidar hits
+        simple_lidar_data_ray_hits_b = torch.nan_to_num(simple_lidar_data_ray_hits_b, nan=float('inf'))
+        simple_lidar_data_b = torch.norm(simple_lidar_data_ray_hits_b, dim=-1)
+        noisy_simple_lidar_data_b = self._add_uniform_noise(simple_lidar_data_b, -0.02, 0.02)
+        noisy_simple_lidar_data_b = (self.cfg.scaling_lidar_data_b * noisy_simple_lidar_data_b).clip(-1.0, 1.0)
         
         noisy_root_lin_vel = self._add_uniform_noise(self._robot.data.root_com_lin_vel_b, -0.2, 0.2)
         noisy_root_ang_vel = self._add_uniform_noise(self._robot.data.root_com_ang_vel_b, -0.1, 0.1)
         noisy_projected_gravity_b = self._add_uniform_noise(self._robot.data.projected_gravity_b, -0.03, 0.03)
-        
         # add uniform noise
         obs = torch.cat(
             [
-                depth_image,
                 noisy_root_lin_vel,
                 noisy_root_ang_vel,
                 noisy_projected_gravity_b,
                 noisy_height,
                 noisy_desired_pos_b,
+                noisy_simple_lidar_data_b,
             ],
             dim=-1,
         )
         observations = {"policy": obs}
-        # print("-------------------------------------\n" , obs.shape)
+   
         return observations
+
     def _get_rewards(self) -> torch.Tensor:
-        
-         # base velocities
+        # base velocities
         root_lin_vel_processed = self._robot.data.root_com_lin_vel_b.clone()
         root_lin_vel_processed[:, 0] *= torch.where(root_lin_vel_processed[:, 0] < -1.0, 2, 1)
         root_lin_vel_processed[:, 1] *= torch.where(torch.abs(root_lin_vel_processed[:, 1]) > 2.0, 2, 1)
         lin_vel = torch.sum(torch.square(root_lin_vel_processed), dim=1)
-
+        # lin_vel = torch.where(torch.torch.linalg.norm(root_lin_vel_processed, dim=1) > self.cfg.lin_vel_max_soft_thresh,
+        #                       lin_vel + self.cfg.lin_vel_max_soft_thresh**2 - 2*(lin_vel**0.5)*self.cfg.lin_vel_max_soft_thresh,
+        #                       torch.zeros_like(lin_vel))
         lin_vel = torch.where(torch.linalg.norm(root_lin_vel_processed, dim=1) > self.cfg.lin_vel_max_soft_thresh,
                               lin_vel + self.cfg.lin_vel_max_soft_thresh**2 - 2*(lin_vel**0.5)*self.cfg.lin_vel_max_soft_thresh,
                               torch.zeros_like(lin_vel))
         ang_vel = torch.sum(torch.square(self._robot.data.root_com_ang_vel_b), dim=1)
         # actions
         actions = torch.sum(torch.abs(self._actions), dim=1)
-
         # distance to goal task
         desired_pos_b, _ = subtract_frame_transforms(
             self._robot.data.root_state_w[:, :3], self._robot.data.root_state_w[:, 3:7], self._desired_pos_w
         )
+        
         prev_distance_to_goal = torch.linalg.norm(self._desired_pos_w - self.prev_pos_w, dim=1)
         distance_to_goal = torch.linalg.norm(self._desired_pos_w - self._robot.data.root_link_pos_w, dim=1)
         
@@ -325,16 +346,14 @@ class Quadcopterend2endEnv(DirectRLEnv):
         
         distance_to_goal_mapped = 1 - torch.tanh(distance_to_goal / (self.cfg.distance_to_goal_std**2))
         distance_to_goal_mapped_fine = 1 - torch.tanh(distance_to_goal / (self.cfg.distance_to_goal_fine_std**2))
-
-        desired_pos_b_clipped = (desired_pos_b / self.cfg.desired_pos_b_obs_clip).clip(-1.0, 1.0)
         
+        desired_pos_b_clipped = (desired_pos_b / self.cfg.desired_pos_b_obs_clip).clip(-1.0, 1.0)
         # close_to_goal True for every env for which the desired_pos_b_clipped is within the limits
         close_to_goal = torch.logical_and(torch.all(-0.99 < desired_pos_b_clipped, dim=1), torch.all(desired_pos_b_clipped < 0.99, dim=1))
         distance_to_goal_mapped = torch.where(
             close_to_goal, distance_to_goal_mapped, torch.zeros_like(distance_to_goal_mapped))
         distance_to_goal_mapped_fine =torch.where(
             close_to_goal, distance_to_goal_mapped_fine, torch.zeros_like(distance_to_goal_mapped_fine))
-
         # undesired contacts
         ang_vel_final = torch.where(distance_to_goal < self.cfg.ang_vel_final_dist_goal_thresh, ang_vel, torch.zeros_like(ang_vel))
         net_contact_forces = self._contact_sensor.data.net_forces_w_history
@@ -342,32 +361,18 @@ class Quadcopterend2endEnv(DirectRLEnv):
             torch.max(torch.norm(net_contact_forces[:, :, self._undesired_contact_body_ids], dim=-1), dim=1)[0] > 0.01
         )
         undesired_contacts = torch.sum(is_contact, dim=1)
-
         # flat orientation
         flat_orientation = torch.sum(torch.square(self._robot.data.projected_gravity_b[:, :2]), dim=1)
-         
-        # 获取深度图（假设形状为 [num_envs, height, width]）
-        depth_image = self._tiledcamera.data.output["depth"]  # (num_envs, H, W)
-
-        # 将无效值（如NaN或0）替换为inf（表示无障碍物）
-        depth_image = torch.nan_to_num(depth_image, nan=float('inf'))
-        depth_image = torch.where(depth_image <= 0, float('inf'), depth_image)
-
-        # 计算每个环境中最小的深度值（最近障碍物）
-        min_depth = torch.amin(depth_image, dim=(1, 2)).squeeze(-1)  # (num_envs,)
-
-        # 计算障碍物接近惩罚
-        # 指数衰减惩罚核心公式
-        obstacle_decay_scale = 0.37
-        obstacle_proximity = torch.exp(
-            -min_depth / obstacle_decay_scale  # 衰减系数控制曲线陡峭度
-        )
-        # obstacle_proximity = torch.where(
-        #     min_depth < self.cfg.threshold_obstacle_proximity,
-        #     self.cfg.threshold_obstacle_proximity - min_depth,
-        #     torch.zeros_like(min_depth))
-        
-
+        # too close to obstacles
+        root_state_w = self._robot.data.root_state_w.unsqueeze(1).repeat(1, self._simple_lidar.data.ray_hits_w.shape[1], 1)
+        simple_lidar_data_ray_hits_b, _ = subtract_frame_transforms(
+            root_state_w[..., :3],root_state_w[..., 3:7], self._simple_lidar.data.ray_hits_w)
+        # obtain the distance to the lidar hits
+        simple_lidar_data_ray_hits_b = torch.nan_to_num(simple_lidar_data_ray_hits_b, nan=float('inf'))
+        simple_lidar_data_b = torch.norm(simple_lidar_data_ray_hits_b, dim=-1)
+        obstacle_proximity = torch.max(torch.where(simple_lidar_data_b < self.cfg.threshold_obstacle_proximity,
+                                         self.cfg.threshold_obstacle_proximity - simple_lidar_data_b,
+                                         torch.zeros_like(simple_lidar_data_b)), dim=1)[0]
         # too close to height bounds
         height_low_bound_proximity = torch.where(self._robot.data.root_state_w[:, 2] < self.cfg.height_w_soft_limits[0],
                                                 self.cfg.height_w_soft_limits[0] - self._robot.data.root_state_w[:, 2],
@@ -376,7 +381,7 @@ class Quadcopterend2endEnv(DirectRLEnv):
                                                 self._robot.data.root_state_w[:, 2] - self.cfg.height_w_soft_limits[1],
                                                 torch.zeros_like(self._robot.data.root_state_w[:, 2]))
         height_bounds_proximity = torch.max(height_low_bound_proximity, height_high_bound_proximity)
-
+        
         rewards = {
             "lin_vel": lin_vel * self.cfg.lin_vel_reward_scale * self.step_dt,
             "ang_vel": ang_vel * self.cfg.ang_vel_reward_scale * self.step_dt,
@@ -391,8 +396,6 @@ class Quadcopterend2endEnv(DirectRLEnv):
             "height_bounds_proximity": height_bounds_proximity * self.cfg.height_bounds_proximity_reward_scale * self.step_dt,
             "terminated": self.reset_terminated * self.cfg.terminated_reward_scale * self.step_dt,
         }
-        reward = torch.sum(torch.stack(list(rewards.values())), dim=0)
-
         reward = torch.sum(torch.stack(list(rewards.values())), dim=0)
         # Logging
         for key, value in rewards.items():
@@ -409,7 +412,7 @@ class Quadcopterend2endEnv(DirectRLEnv):
                                            dim=-1), dim=1)[0] > 0.0001, dim=1)
         died = torch.logical_or(out_of_height_bounds, collided)
         return died, time_out
-    
+        
     def _add_uniform_noise(self, data: torch.Tensor, min_noise: float, max_noise: float):
         return data + torch.rand_like(data) * (max_noise - min_noise) + min_noise
     
@@ -456,10 +459,7 @@ class Quadcopterend2endEnv(DirectRLEnv):
         
         return points
 
-
-
-
-    def _reset_idx(self, env_ids: Sequence[int] | None):
+    def _reset_idx(self, env_ids: torch.Tensor | None):
         if env_ids is None or len(env_ids) == self.num_envs:
             env_ids = self._robot._ALL_INDICES
 
@@ -520,7 +520,7 @@ class Quadcopterend2endEnv(DirectRLEnv):
         self._robot.write_root_link_pose_to_sim(default_root_state[:, :7], env_ids)
         self._robot.write_root_com_velocity_to_sim(default_root_state[:, 7:], env_ids)
         self._robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
-    
+
     def _set_debug_vis_impl(self, debug_vis: bool):
         # create markers if necessary for the first tome
         if debug_vis:
@@ -539,7 +539,6 @@ class Quadcopterend2endEnv(DirectRLEnv):
     def _debug_vis_callback(self, event):
         # update the markers
         self.goal_pos_visualizer.visualize(self._desired_pos_w)
-
 
 
 class QuadcopterEnvCfg_PLAY(Quadcopterend2endEnvCfg):
