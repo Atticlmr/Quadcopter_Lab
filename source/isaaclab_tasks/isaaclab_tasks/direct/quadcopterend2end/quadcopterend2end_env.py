@@ -74,7 +74,8 @@ class Quadcopterend2endEnvCfg(DirectRLEnvCfg):
     dt= 1 / 50
     decimation = 2
     action_space = 4
-    observation_space = 59
+    # observation_space = 59
+    observation_space = 40013# 13 +200*200
     state_space = 0
     debug_vis = True
 
@@ -150,7 +151,7 @@ class Quadcopterend2endEnvCfg(DirectRLEnvCfg):
     # depth camera
     tiled_camera: TiledCameraCfg = TiledCameraCfg(
     prim_path="/World/envs/env_.*/Robot/body/camera",
-    offset=TiledCameraCfg.OffsetCfg(pos=(0.0, 0.0, 0.01)),
+    offset=TiledCameraCfg.OffsetCfg(pos=(0.0, 0.0, 0.01), rot=(0.5, -0.5, 0.5, -0.5), convention="ros"),
     data_types=["depth"],
     spawn=sim_utils.PinholeCameraCfg(
         focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 20.0)
@@ -255,8 +256,7 @@ class Quadcopterend2endEnv(DirectRLEnv):
         self._simple_lidar = RayCaster(self.cfg.simple_lidar)
         self.scene.sensors["simple_lidar"] = self._simple_lidar
 
-        # self._tiledcamera = TiledCamera(self.cfg.tiled_camera)
-        # self.scene.sensors["tiled_camera"] = self._tiledcamera
+        # camera
         self._tiledcamera = TiledCamera(self.cfg.tiled_camera)
         self.scene.sensors["tiled_camera"] = self._tiledcamera
 
@@ -291,27 +291,32 @@ class Quadcopterend2endEnv(DirectRLEnv):
         noisy_height = self._add_uniform_noise(height, -0.02, 0.02)
         noisy_height /= self.cfg.height_w_limits[1]
         # create a self._simple_lidar.data.ray_hits_w.shape tensor and store repeated root state
-        root_state_w = self._robot.data.root_state_w.unsqueeze(1).repeat(1, self._simple_lidar.data.ray_hits_w.shape[1], 1)
-        simple_lidar_data_ray_hits_b, _ = subtract_frame_transforms(
-            root_state_w[..., :3], root_state_w[..., 3:7], self._simple_lidar.data.ray_hits_w)
-        # obtain the distance to the lidar hits
-        simple_lidar_data_ray_hits_b = torch.nan_to_num(simple_lidar_data_ray_hits_b, nan=float('inf'))
-        simple_lidar_data_b = torch.norm(simple_lidar_data_ray_hits_b, dim=-1)
-        noisy_simple_lidar_data_b = self._add_uniform_noise(simple_lidar_data_b, -0.02, 0.02)
-        noisy_simple_lidar_data_b = (self.cfg.scaling_lidar_data_b * noisy_simple_lidar_data_b).clip(-1.0, 1.0)
+        # root_state_w = self._robot.data.root_state_w.unsqueeze(1).repeat(1, self._simple_lidar.data.ray_hits_w.shape[1], 1)
+        # simple_lidar_data_ray_hits_b, _ = subtract_frame_transforms(
+        #     root_state_w[..., :3], root_state_w[..., 3:7], self._simple_lidar.data.ray_hits_w)
+        # # obtain the distance to the lidar hits
+        # simple_lidar_data_ray_hits_b = torch.nan_to_num(simple_lidar_data_ray_hits_b, nan=float('inf'))
+        # simple_lidar_data_b = torch.norm(simple_lidar_data_ray_hits_b, dim=-1)
+        # noisy_simple_lidar_data_b = self._add_uniform_noise(simple_lidar_data_b, -0.02, 0.02)
+        # noisy_simple_lidar_data_b = (self.cfg.scaling_lidar_data_b * noisy_simple_lidar_data_b).clip(-1.0, 1.0)
         
         noisy_root_lin_vel = self._add_uniform_noise(self._robot.data.root_com_lin_vel_b, -0.2, 0.2)
         noisy_root_ang_vel = self._add_uniform_noise(self._robot.data.root_com_ang_vel_b, -0.1, 0.1)
         noisy_projected_gravity_b = self._add_uniform_noise(self._robot.data.projected_gravity_b, -0.03, 0.03)
+        
+         # depth_image
+        depth_image = self._tiledcamera.data.output["depth"].reshape(self.num_envs, -1)  # (num_envs, height * width)
+        
         # add uniform noise
         obs = torch.cat(
             [
+                depth_image,
                 noisy_root_lin_vel,
                 noisy_root_ang_vel,
                 noisy_projected_gravity_b,
                 noisy_height,
                 noisy_desired_pos_b,
-                noisy_simple_lidar_data_b,
+                # noisy_simple_lidar_data_b,
             ],
             dim=-1,
         )
@@ -367,12 +372,24 @@ class Quadcopterend2endEnv(DirectRLEnv):
         root_state_w = self._robot.data.root_state_w.unsqueeze(1).repeat(1, self._simple_lidar.data.ray_hits_w.shape[1], 1)
         simple_lidar_data_ray_hits_b, _ = subtract_frame_transforms(
             root_state_w[..., :3],root_state_w[..., 3:7], self._simple_lidar.data.ray_hits_w)
+        
         # obtain the distance to the lidar hits
         simple_lidar_data_ray_hits_b = torch.nan_to_num(simple_lidar_data_ray_hits_b, nan=float('inf'))
         simple_lidar_data_b = torch.norm(simple_lidar_data_ray_hits_b, dim=-1)
         obstacle_proximity = torch.max(torch.where(simple_lidar_data_b < self.cfg.threshold_obstacle_proximity,
                                          self.cfg.threshold_obstacle_proximity - simple_lidar_data_b,
                                          torch.zeros_like(simple_lidar_data_b)), dim=1)[0]
+        
+        # 获取深度图
+        depth_image = self._tiledcamera.data.output["depth"]  # (num_envs, H, W)
+        # 将无效值（如NaN或0）替换为inf（表示无障碍物）
+        depth_image = torch.nan_to_num(depth_image, nan=float('inf'))
+        depth_image = torch.where(depth_image <= 0, float('inf'), depth_image)
+
+        # 计算每个环境中最小的深度值（最近障碍物）
+        min_depth = torch.amin(depth_image, dim=(1, 2)).squeeze(-1)  # (num_envs,)
+
+        
         # too close to height bounds
         height_low_bound_proximity = torch.where(self._robot.data.root_state_w[:, 2] < self.cfg.height_w_soft_limits[0],
                                                 self.cfg.height_w_soft_limits[0] - self._robot.data.root_state_w[:, 2],
