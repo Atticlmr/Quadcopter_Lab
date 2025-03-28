@@ -22,7 +22,7 @@ from isaaclab.envs.ui import BaseEnvWindow
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.markers import VisualizationMarkers
 from isaaclab.utils import configclass
-from isaaclab.sensors import ContactSensor, ContactSensorCfg, RayCaster, RayCasterCfg, patterns
+from isaaclab.sensors import ContactSensor, ContactSensorCfg, RayCaster, RayCasterCfg, patterns,TiledCameraCfg,TiledCamera
 from isaaclab.utils.assets import NVIDIA_NUCLEUS_DIR
 from isaaclab.utils.math import subtract_frame_transforms, random_yaw_orientation
 from isaaclab.terrains import TerrainImporterCfg
@@ -120,7 +120,18 @@ class QuadcopterlidarEnvCfg(DirectRLEnvCfg):
         ),
         debug_vis=False,
     )
-    
+    # DEBUG
+
+    # tiled_camera: TiledCameraCfg = TiledCameraCfg(
+    # prim_path="/World/envs/env_.*/Robot/body/camera",
+    # offset=TiledCameraCfg.OffsetCfg(pos=(0.0, 0.0, 0.01), rot=(0.5, -0.5, 0.5, -0.5), convention="ros"),
+    # data_types=["depth"],
+    # spawn=sim_utils.PinholeCameraCfg(
+    #     focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 20.0)
+    # ),
+    # width=80,
+    # height=80,)
+
     # change viewer settings
     viewer = ViewerCfg(eye=(18.0, 18.0, 18.0), lookat=(6.5, 6.5, 0), resolution=(1280, 720))
 
@@ -242,6 +253,9 @@ class QuadcopterlidarEnv(DirectRLEnv):
         self.scene.sensors["contact_sensor"] = self._contact_sensor
         self._simple_lidar = RayCaster(self.cfg.simple_lidar)
         self.scene.sensors["simple_lidar"] = self._simple_lidar
+        # DEBUG
+        # self._tiledcamera = TiledCamera(self.cfg.tiled_camera)
+        # self.scene.sensors["tiled_camera"] = self._tiledcamera
 
         self.cfg.terrain.num_envs = self.scene.cfg.num_envs
         self.cfg.terrain.env_spacing = self.scene.cfg.env_spacing
@@ -299,7 +313,7 @@ class QuadcopterlidarEnv(DirectRLEnv):
             dim=-1,
         )
         observations = {"policy": obs}
-        # print("-------------------------------------\n" , obs.shape)
+   
         return observations
 
     def _get_rewards(self) -> torch.Tensor:
