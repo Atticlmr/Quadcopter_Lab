@@ -54,6 +54,8 @@ class ArticulationRootPropertiesCfg:
 @configclass
 class RigidBodyPropertiesCfg:
     """Properties to apply to a rigid body.
+    
+    配置刚体性质
 
     See :meth:`modify_rigid_body_properties` for more information.
 
@@ -72,10 +74,15 @@ class RigidBodyPropertiesCfg:
     still derives velocities for the kinematic body based on the external motion.
 
     For more information on kinematic bodies, please refer to the `documentation <https://openusd.org/release/wp_rigid_body_physics.html#kinematic-bodies>`_.
+    
+    运动学刚体通过动画姿势或用户定义的姿势进行移动，但仿真仍会根据外部运动计算其速度。
     """
 
     disable_gravity: bool | None = None
-    """Disable gravity for the actor."""
+    """
+    Disable gravity for the actor.
+    重力
+    """
 
     linear_damping: float | None = None
     """Linear damping for the body."""
@@ -90,28 +97,49 @@ class RigidBodyPropertiesCfg:
     """Maximum angular velocity for rigid bodies (in deg/s)."""
 
     max_depenetration_velocity: float | None = None
-    """Maximum depenetration velocity permitted to be introduced by the solver (in m/s)."""
+    """
+    Maximum depenetration velocity permitted to be introduced by the solver (in m/s).
+    求解器允许的最大穿透分离速度 单位 m/s
+    """
 
     max_contact_impulse: float | None = None
-    """The limit on the impulse that may be applied at a contact."""
+    """The limit on the impulse that may be applied at a contact.接触点可施加的冲量上限"""
 
     enable_gyroscopic_forces: bool | None = None
-    """Enables computation of gyroscopic forces on the rigid body."""
+    """
+    Enables computation of gyroscopic forces on the rigid body.
+    是否启用刚体的陀螺力计算
+    """
 
     retain_accelerations: bool | None = None
-    """Carries over forces/accelerations over sub-steps."""
+    """
+    Carries over forces/accelerations over sub-steps.
+    是否在子步长模拟中保留加速度/力的累积效应。
+    """
 
     solver_position_iteration_count: int | None = None
-    """Solver position iteration counts for the body."""
+    """
+    Solver position iteration counts for the body.
+    刚体的求解器位置迭代次数。
+    """
 
     solver_velocity_iteration_count: int | None = None
-    """Solver position iteration counts for the body."""
+    """
+    Solver position iteration counts for the body.
+    刚体的求解器速度迭代次数。
+    """
 
     sleep_threshold: float | None = None
-    """Mass-normalized kinetic energy threshold below which an actor may go to sleep."""
+    """
+    Mass-normalized kinetic energy threshold below which an actor may go to sleep.
+    质量归一化的动能阈值，低于此值时刚体可能进入休眠状态。
+    """
 
     stabilization_threshold: float | None = None
-    """The mass-normalized kinetic energy threshold below which an actor may participate in stabilization."""
+    """
+    The mass-normalized kinetic energy threshold below which an actor may participate in stabilization.
+    质量归一化的动能阈值，低于此值时刚体可能进入休眠状态。
+    """
 
 
 @configclass

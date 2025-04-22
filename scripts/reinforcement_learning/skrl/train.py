@@ -181,13 +181,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         env = gym.wrappers.RecordVideo(env, **video_kwargs)
     # ---------------------------------------------------------------------
     # 调试代码：打印原始观测空间信息
-    print("\n[DEBUG] Raw environment observation space:")
-    if hasattr(env.observation_space, 'spaces'):  # 如果是Dict空间
-        print("Observation keys:", list(env.observation_space.spaces.keys()))
-        for key, space in env.observation_space.spaces.items():
-            print(f"  {key}: {space}")
-    else:  # 如果是Box空间
-        print(f"Observation space: {env.observation_space}")
+    # print("\n[DEBUG] Raw environment observation space:")
+    # if hasattr(env.observation_space, 'spaces'):  # 如果是Dict空间
+    #     print("Observation keys:", list(env.observation_space.spaces.keys()))
+    #     for key, space in env.observation_space.spaces.items():
+    #         print(f"  {key}: {space}")
+    # else:  # 如果是Box空间
+    #     print(f"Observation space: {env.observation_space}")
 
 
     # ---------------------------------------------------------------------

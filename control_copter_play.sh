@@ -2,4 +2,4 @@
 --task=Isaac-Quadcopterend2end-Direct-v0 \
 --num_envs=32 \
 --enable_cameras \
---checkpoint /home/li/Desktop/Quadcopter_Lab/logs/skrl/quadcopter_direct/2025-03-27_21-27-18_ppo_torch/checkpoints/agent_160000.pt
+--checkpoint /home/li/Desktop/Quadcopter_Lab/runs/torch/Isaac-Quadcopterend2end-Direct-v0/25-04-08_10-41-23-232636_PPO/checkpoints/best_agent.pt

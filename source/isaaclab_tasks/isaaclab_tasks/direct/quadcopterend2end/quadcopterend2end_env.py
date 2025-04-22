@@ -8,6 +8,10 @@ from __future__ import annotations
 import math
 import torch
 import gymnasium as gym
+import torch.nn.functional as F
+import torchvision.transforms.functional as tvf
+import cv2
+import numpy as np
 
 import isaaclab.sim as sim_utils
 from isaaclab.sim import SimulationCfg
@@ -22,7 +26,7 @@ from isaaclab.envs.ui import BaseEnvWindow
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.markers import VisualizationMarkers
 from isaaclab.utils import configclass
-from isaaclab.sensors import ContactSensor, ContactSensorCfg, RayCaster, RayCasterCfg, patterns,TiledCameraCfg,TiledCamera
+from isaaclab.sensors import ContactSensor, ContactSensorCfg,TiledCameraCfg,TiledCamera
 from isaaclab.utils.assets import NVIDIA_NUCLEUS_DIR
 from isaaclab.utils.math import subtract_frame_transforms, random_yaw_orientation
 from isaaclab.terrains import TerrainImporterCfg
@@ -70,15 +74,13 @@ class EventCfg:
 @configclass
 class Quadcopterend2endEnvCfg(DirectRLEnvCfg):
     # env
-    episode_length_s = 7.5
-    dt= 1 / 50
+    episode_length_s = 7.5 * 2
+    dt = 1 / 50
     decimation = 2
     action_space = 4
     # observation_space = 59
-    observation_space = 40013# 13 +200*200
     state_space = 0
     debug_vis = True
-
     size_terrain = 25.0
     objects_density_min = 0.17
     objects_density_max = 0.7
@@ -122,6 +124,7 @@ class Quadcopterend2endEnvCfg(DirectRLEnvCfg):
         debug_vis=False,
     )
 
+
     # change viewer settings
     viewer = ViewerCfg(eye=(18.0, 18.0, 18.0), lookat=(6.5, 6.5, 0), resolution=(1280, 720))
 
@@ -133,45 +136,51 @@ class Quadcopterend2endEnvCfg(DirectRLEnvCfg):
 
     # robot
     robot: ArticulationCfg = CRAZYFLIE_CFG.replace(prim_path="/World/envs/env_.*/Robot").\
-                                           replace(spawn = CRAZYFLIE_CFG.spawn.replace(activate_contact_sensors=True))
-    simple_lidar = RayCasterCfg(
-        prim_path="/World/envs/env_.*/Robot/body",
-        update_period= dt * decimation,
-        offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 0.01)),
-        max_distance=15,
-        attach_yaw_only=False,
-        pattern_cfg=patterns.LidarPatternCfg(channels=1, vertical_fov_range=(-0.0, 0.0), 
-                                             horizontal_fov_range=(-90.0, 90.0),
-                                             horizontal_res=3.99),
-        debug_vis=False,
-        mesh_prim_paths=["/World/ground"],
+                    replace(spawn = CRAZYFLIE_CFG.spawn.replace(activate_contact_sensors=True))
+    # simple_lidar = RayCasterCfg(
+    #     prim_path="/World/envs/env_.*/Robot/body",
+    #     update_period= dt * decimation,
+    #     offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 0.01)),
+    #     max_distance=15,
+    #     attach_yaw_only=False,
+    #     pattern_cfg=patterns.LidarPatternCfg(channels=1, vertical_fov_range=(-0.0, 0.0), 
+    #                                          horizontal_fov_range=(-90.0, 90.0),
+    #                                          horizontal_res=3.99),
+    #     debug_vis=False,
+    #     mesh_prim_paths=["/World/ground"],
+    # )
+    # scaling_lidar_data_b = 1/6.0
+    contact_sensor: ContactSensorCfg = ContactSensorCfg(
+        prim_path="/World/envs/env_.*/Robot/.*", history_length=2, update_period=dt, track_air_time=True, force_threshold=1.0
     )
-    scaling_lidar_data_b = 1/6.0
-
     # depth camera
     tiled_camera: TiledCameraCfg = TiledCameraCfg(
-    prim_path="/World/envs/env_.*/Robot/body/camera",
-    offset=TiledCameraCfg.OffsetCfg(pos=(0.0, 0.0, 0.01), rot=(0.5, -0.5, 0.5, -0.5), convention="ros"),
-    data_types=["depth"],
-    spawn=sim_utils.PinholeCameraCfg(
-        focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 20.0)
-    ),
-    width=80,
-    height=80,)
-
-    contact_sensor: ContactSensorCfg = ContactSensorCfg(
-        prim_path="/World/envs/env_.*/Robot/.*", history_length=2, update_period= dt, # track_air_time=False
+        prim_path="/World/envs/env_.*/Robot/body/front_camera",
+        # prim_path="/World/envs/env_.*/Camera",
+        update_period=0.1,
+        height=112,
+        width=112,
+        data_types=["distance_to_camera"],
+        spawn=sim_utils.PinholeCameraCfg(
+            focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 20.0)
+        ),
+        offset=TiledCameraCfg.OffsetCfg(pos=(0.02, 0.0, 0.03), rot=(0.5, 0.5, -0.5, -0.5), convention="opengl"),
+        debug_vis=True
     )
+    
+    observation_space = [tiled_camera.height + 1, tiled_camera.width, 1]
+
+
     # contact_forces = ContactSensorCfg(
     #     prim_path="{ENV_REGEX_NS}/Robot/.*_FOOT", update_period=0.0, history_length=6, debug_vis=True
     # )
     thrust_to_weight = 1.9
     thrust_scale = 0.75
     moment_scale = 0.01
-    
+
     # task
     desired_pos_w_height_limits = (2.0, 3.0)
-    desired_pos_b_xy_limits = (size_terrain/2-1.0, size_terrain/2)
+    desired_pos_b_xy_limits = (size_terrain / 2 - 1.0, size_terrain / 2)
     desired_pos_b_obs_clip = 4.0
     height_w_limits = (0.5, 4.5)
     lin_vel_max_soft_thresh = 0
@@ -191,7 +200,8 @@ class Quadcopterend2endEnvCfg(DirectRLEnvCfg):
     ang_vel_final_reward_scale = -0.2
     actions_reward_scale = -0.2
     progress_to_goal_reward_scale = 2.0
-    distance_to_goal_reward_scale = 1.0
+    distance_to_goal_reward_scale = 2.0
+    # distance_to_goal_reward_scale = 1.0
     distance_to_goal_fine_reward_scale = 0.7
     undesired_contacts_reward_scale = -4.0
     flat_orientation_reward_scale = -1.0
@@ -250,15 +260,12 @@ class Quadcopterend2endEnv(DirectRLEnv):
     def _setup_scene(self):
         self._robot = Articulation(self.cfg.robot)
         self.scene.articulations["robot"] = self._robot
-        # lidar
         self._contact_sensor = ContactSensor(self.cfg.contact_sensor)
         self.scene.sensors["contact_sensor"] = self._contact_sensor
-        self._simple_lidar = RayCaster(self.cfg.simple_lidar)
-        self.scene.sensors["simple_lidar"] = self._simple_lidar
-
-        # camera
-        self._tiledcamera = TiledCamera(self.cfg.tiled_camera)
-        self.scene.sensors["tiled_camera"] = self._tiledcamera
+        # self._simple_lidar = RayCaster(self.cfg.simple_lidar)
+        # self.scene.sensors["simple_lidar"] = self._simple_lidar
+        self._tiled_camera = TiledCamera(self.cfg.tiled_camera)
+        self.scene.sensors["tiled_camera"] = self._tiled_camera
 
         self.cfg.terrain.num_envs = self.scene.cfg.num_envs
         self.cfg.terrain.env_spacing = self.scene.cfg.env_spacing
@@ -304,22 +311,54 @@ class Quadcopterend2endEnv(DirectRLEnv):
         noisy_root_ang_vel = self._add_uniform_noise(self._robot.data.root_com_ang_vel_b, -0.1, 0.1)
         noisy_projected_gravity_b = self._add_uniform_noise(self._robot.data.projected_gravity_b, -0.03, 0.03)
         
-         # depth_image
-        depth_image = self._tiledcamera.data.output["depth"].reshape(self.num_envs, -1)  # (num_envs, height * width)
-        
-        # add uniform noise
-        obs = torch.cat(
+        # camera
+        depth_img = self._tiled_camera.data.output["distance_to_camera"].clip(0.1, 20)
+        # img preprocess
+        depth_img_norm = depth_img.float().mul(1 / 20.0).clamp(0.0, 1.0)
+        depth_img_norm[:, :, :, 0] = tvf.normalize(depth_img_norm[:, :, :, 0], mean=0.2, std=0.3, inplace=False)
+        self.camera_obs = depth_img
+
+        # display camera view
+        display = False
+        if display:
+            img_name = "Depth Image"
+            cv2.namedWindow(img_name, cv2.WINDOW_AUTOSIZE)
+            img = depth_img[0, :, :, 0].cpu().numpy()
+            img_normalized = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX)
+            img_uint8 = np.uint8(img_normalized)
+            img_colored = cv2.applyColorMap(img_uint8, cv2.COLORMAP_VIRIDIS)
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            # text = "step_num: " + str(infos[0]["step_num"])
+            org = (5, 15)
+            fontScale = 0.3
+            color = (0, 0, 255)
+            thickness = 1
+            # cv2.putText(img_colored, text, org, font, fontScale, color, thickness)
+            # cv2.resizeWindow(img_name, img_colored.shape[1] * 1, img_colored.shape[0] * 1)
+            cv2.imshow(img_name, img_colored)
+            key = cv2.waitKey(1)
+
+        # state
+        state_feature = torch.cat(
             [
-                depth_image,
                 noisy_root_lin_vel,
                 noisy_root_ang_vel,
                 noisy_projected_gravity_b,
-                noisy_height,
                 noisy_desired_pos_b,
-                # noisy_simple_lidar_data_b,
             ],
             dim=-1,
         )
+        state_feature = F.pad(state_feature, (0, depth_img.shape[2] - state_feature.shape[-1])).unsqueeze(1).unsqueeze(
+            -1)
+
+        obs = torch.cat(
+            [
+                depth_img_norm,
+                state_feature,
+            ],
+            dim=1,
+        )
+
         observations = {"policy": obs}
    
         return observations
@@ -330,11 +369,9 @@ class Quadcopterend2endEnv(DirectRLEnv):
         root_lin_vel_processed[:, 0] *= torch.where(root_lin_vel_processed[:, 0] < -1.0, 2, 1)
         root_lin_vel_processed[:, 1] *= torch.where(torch.abs(root_lin_vel_processed[:, 1]) > 2.0, 2, 1)
         lin_vel = torch.sum(torch.square(root_lin_vel_processed), dim=1)
-        # lin_vel = torch.where(torch.torch.linalg.norm(root_lin_vel_processed, dim=1) > self.cfg.lin_vel_max_soft_thresh,
-        #                       lin_vel + self.cfg.lin_vel_max_soft_thresh**2 - 2*(lin_vel**0.5)*self.cfg.lin_vel_max_soft_thresh,
-        #                       torch.zeros_like(lin_vel))
         lin_vel = torch.where(torch.linalg.norm(root_lin_vel_processed, dim=1) > self.cfg.lin_vel_max_soft_thresh,
-                              lin_vel + self.cfg.lin_vel_max_soft_thresh**2 - 2*(lin_vel**0.5)*self.cfg.lin_vel_max_soft_thresh,
+                              lin_vel + self.cfg.lin_vel_max_soft_thresh ** 2 - 2 * (
+                                          lin_vel ** 0.5) * self.cfg.lin_vel_max_soft_thresh,
                               torch.zeros_like(lin_vel))
         ang_vel = torch.sum(torch.square(self._robot.data.root_com_ang_vel_b), dim=1)
         # actions
@@ -343,62 +380,56 @@ class Quadcopterend2endEnv(DirectRLEnv):
         desired_pos_b, _ = subtract_frame_transforms(
             self._robot.data.root_state_w[:, :3], self._robot.data.root_state_w[:, 3:7], self._desired_pos_w
         )
-        
+
         prev_distance_to_goal = torch.linalg.norm(self._desired_pos_w - self.prev_pos_w, dim=1)
         distance_to_goal = torch.linalg.norm(self._desired_pos_w - self._robot.data.root_link_pos_w, dim=1)
-        
-        progress_to_goal_mapped = -torch.tanh((distance_to_goal-prev_distance_to_goal) / (self.cfg.progress_to_goal_std**2))
-        
-        distance_to_goal_mapped = 1 - torch.tanh(distance_to_goal / (self.cfg.distance_to_goal_std**2))
-        distance_to_goal_mapped_fine = 1 - torch.tanh(distance_to_goal / (self.cfg.distance_to_goal_fine_std**2))
-        
+
+        progress_to_goal_mapped = -torch.tanh(
+            (distance_to_goal - prev_distance_to_goal) / (self.cfg.progress_to_goal_std ** 2))
+
+        distance_to_goal_mapped = 1 - torch.tanh(distance_to_goal / (self.cfg.distance_to_goal_std ** 2))
+        distance_to_goal_mapped_fine = 1 - torch.tanh(distance_to_goal / (self.cfg.distance_to_goal_fine_std ** 2))
+
         desired_pos_b_clipped = (desired_pos_b / self.cfg.desired_pos_b_obs_clip).clip(-1.0, 1.0)
         # close_to_goal True for every env for which the desired_pos_b_clipped is within the limits
-        close_to_goal = torch.logical_and(torch.all(-0.99 < desired_pos_b_clipped, dim=1), torch.all(desired_pos_b_clipped < 0.99, dim=1))
+        close_to_goal = torch.logical_and(torch.all(-0.99 < desired_pos_b_clipped, dim=1),
+                                          torch.all(desired_pos_b_clipped < 0.99, dim=1))
         distance_to_goal_mapped = torch.where(
             close_to_goal, distance_to_goal_mapped, torch.zeros_like(distance_to_goal_mapped))
-        distance_to_goal_mapped_fine =torch.where(
+        distance_to_goal_mapped_fine = torch.where(
             close_to_goal, distance_to_goal_mapped_fine, torch.zeros_like(distance_to_goal_mapped_fine))
         # undesired contacts
-        ang_vel_final = torch.where(distance_to_goal < self.cfg.ang_vel_final_dist_goal_thresh, ang_vel, torch.zeros_like(ang_vel))
+        ang_vel_final = torch.where(distance_to_goal < self.cfg.ang_vel_final_dist_goal_thresh, ang_vel,
+                                    torch.zeros_like(ang_vel))
         net_contact_forces = self._contact_sensor.data.net_forces_w_history
         is_contact = (
-            torch.max(torch.norm(net_contact_forces[:, :, self._undesired_contact_body_ids], dim=-1), dim=1)[0] > 0.01
+                torch.max(torch.norm(net_contact_forces[:, :, self._undesired_contact_body_ids], dim=-1), dim=1)[
+                    0] > 0.01
         )
         undesired_contacts = torch.sum(is_contact, dim=1)
         # flat orientation
         flat_orientation = torch.sum(torch.square(self._robot.data.projected_gravity_b[:, :2]), dim=1)
-        # too close to obstacles
-        root_state_w = self._robot.data.root_state_w.unsqueeze(1).repeat(1, self._simple_lidar.data.ray_hits_w.shape[1], 1)
-        simple_lidar_data_ray_hits_b, _ = subtract_frame_transforms(
-            root_state_w[..., :3],root_state_w[..., 3:7], self._simple_lidar.data.ray_hits_w)
-        
-        # obtain the distance to the lidar hits
-        simple_lidar_data_ray_hits_b = torch.nan_to_num(simple_lidar_data_ray_hits_b, nan=float('inf'))
-        simple_lidar_data_b = torch.norm(simple_lidar_data_ray_hits_b, dim=-1)
-        obstacle_proximity = torch.max(torch.where(simple_lidar_data_b < self.cfg.threshold_obstacle_proximity,
-                                         self.cfg.threshold_obstacle_proximity - simple_lidar_data_b,
-                                         torch.zeros_like(simple_lidar_data_b)), dim=1)[0]
-        
-        # 获取深度图
-        depth_image = self._tiledcamera.data.output["depth"]  # (num_envs, H, W)
-        # 将无效值（如NaN或0）替换为inf（表示无障碍物）
-        depth_image = torch.nan_to_num(depth_image, nan=float('inf'))
-        depth_image = torch.where(depth_image <= 0, float('inf'), depth_image)
 
-        # 计算每个环境中最小的深度值（最近障碍物）
-        min_depth = torch.amin(depth_image, dim=(1, 2)).squeeze(-1)  # (num_envs,)
 
-        
+        # camera
+        depth = self.camera_obs
+        #  threshold_obstacle_proximity = 0.4
+        obstacle_proximity = torch.max(torch.where(depth < self.cfg.threshold_obstacle_proximity,
+                                                   self.cfg.threshold_obstacle_proximity - depth,
+                                                   torch.zeros_like(depth)), dim=1)[0]
+        obstacle_proximity = torch.max(obstacle_proximity, dim=1)[0]
+        obstacle_proximity = obstacle_proximity.squeeze(-1)
+
         # too close to height bounds
         height_low_bound_proximity = torch.where(self._robot.data.root_state_w[:, 2] < self.cfg.height_w_soft_limits[0],
-                                                self.cfg.height_w_soft_limits[0] - self._robot.data.root_state_w[:, 2],
-                                                torch.zeros_like(self._robot.data.root_state_w[:, 2]))
-        height_high_bound_proximity = torch.where(self._robot.data.root_state_w[:, 2] > self.cfg.height_w_soft_limits[1],
-                                                self._robot.data.root_state_w[:, 2] - self.cfg.height_w_soft_limits[1],
-                                                torch.zeros_like(self._robot.data.root_state_w[:, 2]))
+                                                 self.cfg.height_w_soft_limits[0] - self._robot.data.root_state_w[:, 2],
+                                                 torch.zeros_like(self._robot.data.root_state_w[:, 2]))
+        height_high_bound_proximity = torch.where(
+            self._robot.data.root_state_w[:, 2] > self.cfg.height_w_soft_limits[1],
+            self._robot.data.root_state_w[:, 2] - self.cfg.height_w_soft_limits[1],
+            torch.zeros_like(self._robot.data.root_state_w[:, 2]))
         height_bounds_proximity = torch.max(height_low_bound_proximity, height_high_bound_proximity)
-        
+
         rewards = {
             "lin_vel": lin_vel * self.cfg.lin_vel_reward_scale * self.step_dt,
             "ang_vel": ang_vel * self.cfg.ang_vel_reward_scale * self.step_dt,

@@ -52,8 +52,8 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     episode_length_s = 10.0
     decimation = 2
     action_space = 4
-    # observation_space = 12
-    observation_space = 6412
+    observation_space = 12
+    # observation_space = 6412
     state_space = 0
     debug_vis = True
 
@@ -93,8 +93,9 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     
     # depth camera
     tiled_camera: TiledCameraCfg = TiledCameraCfg(
+    update_period=decimation/100,
     prim_path="/World/envs/env_.*/Robot/body/camera",
-    offset=TiledCameraCfg.OffsetCfg(pos=(0.0, 0.0, 0.01)),
+    offset=TiledCameraCfg.OffsetCfg(pos=(0.0, 0.0, 0.01), rot=(0.5, -0.5, 0.5, -0.5), convention="ros"),
     data_types=["depth"],
     spawn=sim_utils.PinholeCameraCfg(
         focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 20.0)
@@ -148,7 +149,7 @@ class QuadcopterEnv(DirectRLEnv):
         self.scene.articulations["robot"] = self._robot
 
         self._tiledcamera = TiledCamera(self.cfg.tiled_camera)
-        self.scene.sensors["simple_lidar"] = self._tiledcamera
+        self.scene.sensors["tiledcamera"] = self._tiledcamera
 
         self.cfg.terrain.num_envs = self.scene.cfg.num_envs
         self.cfg.terrain.env_spacing = self.scene.cfg.env_spacing
@@ -173,11 +174,11 @@ class QuadcopterEnv(DirectRLEnv):
         )
         # num_envs x 80 x 80
         # 展开为 num_envs x 6400 再拼接 
-        # depthimage = self._tiledcamera.data.output["depth"]
-        depthimage = self._tiledcamera.data.output["depth"].reshape(self.num_envs, -1)
+
+        # depthimage = self._tiledcamera.data.output["depth"].reshape(self.num_envs, -1)
         obs = torch.cat(
             [
-                depthimage,
+                # depthimage,
                 self._robot.data.root_lin_vel_b,
                 self._robot.data.root_ang_vel_b,
                 self._robot.data.projected_gravity_b,
