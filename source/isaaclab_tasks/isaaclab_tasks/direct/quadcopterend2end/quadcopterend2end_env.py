@@ -3,6 +3,11 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
+
+'''
+./isaaclab.sh -p scripts/reinforcement_learning/skrl/train.py --task=Isaac-Quadcopterend2end-Direct-v0 --headless --num_envs 100 --enable_cameras
+
+'''
 from __future__ import annotations
 
 import math
@@ -158,8 +163,8 @@ class Quadcopterend2endEnvCfg(DirectRLEnvCfg):
         prim_path="/World/envs/env_.*/Robot/body/front_camera",
         # prim_path="/World/envs/env_.*/Camera",
         update_period=0.1,
-        height=112,
-        width=112,
+        height=64,
+        width=64,
         data_types=["distance_to_camera"],
         spawn=sim_utils.PinholeCameraCfg(
             focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 20.0)
@@ -297,15 +302,6 @@ class Quadcopterend2endEnv(DirectRLEnv):
         height = self._robot.data.root_state_w[:, 2].unsqueeze(1)
         noisy_height = self._add_uniform_noise(height, -0.02, 0.02)
         noisy_height /= self.cfg.height_w_limits[1]
-        # create a self._simple_lidar.data.ray_hits_w.shape tensor and store repeated root state
-        # root_state_w = self._robot.data.root_state_w.unsqueeze(1).repeat(1, self._simple_lidar.data.ray_hits_w.shape[1], 1)
-        # simple_lidar_data_ray_hits_b, _ = subtract_frame_transforms(
-        #     root_state_w[..., :3], root_state_w[..., 3:7], self._simple_lidar.data.ray_hits_w)
-        # # obtain the distance to the lidar hits
-        # simple_lidar_data_ray_hits_b = torch.nan_to_num(simple_lidar_data_ray_hits_b, nan=float('inf'))
-        # simple_lidar_data_b = torch.norm(simple_lidar_data_ray_hits_b, dim=-1)
-        # noisy_simple_lidar_data_b = self._add_uniform_noise(simple_lidar_data_b, -0.02, 0.02)
-        # noisy_simple_lidar_data_b = (self.cfg.scaling_lidar_data_b * noisy_simple_lidar_data_b).clip(-1.0, 1.0)
         
         noisy_root_lin_vel = self._add_uniform_noise(self._robot.data.root_com_lin_vel_b, -0.2, 0.2)
         noisy_root_ang_vel = self._add_uniform_noise(self._robot.data.root_com_ang_vel_b, -0.1, 0.1)
@@ -318,27 +314,8 @@ class Quadcopterend2endEnv(DirectRLEnv):
         depth_img_norm[:, :, :, 0] = tvf.normalize(depth_img_norm[:, :, :, 0], mean=0.2, std=0.3, inplace=False)
         self.camera_obs = depth_img
 
-        # display camera view
-        display = False
-        if display:
-            img_name = "Depth Image"
-            cv2.namedWindow(img_name, cv2.WINDOW_AUTOSIZE)
-            img = depth_img[0, :, :, 0].cpu().numpy()
-            img_normalized = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX)
-            img_uint8 = np.uint8(img_normalized)
-            img_colored = cv2.applyColorMap(img_uint8, cv2.COLORMAP_VIRIDIS)
-            font = cv2.FONT_HERSHEY_SIMPLEX
-            # text = "step_num: " + str(infos[0]["step_num"])
-            org = (5, 15)
-            fontScale = 0.3
-            color = (0, 0, 255)
-            thickness = 1
-            # cv2.putText(img_colored, text, org, font, fontScale, color, thickness)
-            # cv2.resizeWindow(img_name, img_colored.shape[1] * 1, img_colored.shape[0] * 1)
-            cv2.imshow(img_name, img_colored)
-            key = cv2.waitKey(1)
 
-        # state
+        # state 12维
         state_feature = torch.cat(
             [
                 noisy_root_lin_vel,
@@ -348,6 +325,8 @@ class Quadcopterend2endEnv(DirectRLEnv):
             ],
             dim=-1,
         )
+
+        # 填充到112维
         state_feature = F.pad(state_feature, (0, depth_img.shape[2] - state_feature.shape[-1])).unsqueeze(1).unsqueeze(
             -1)
 
@@ -360,7 +339,7 @@ class Quadcopterend2endEnv(DirectRLEnv):
         )
 
         observations = {"policy": obs}
-   
+
         return observations
 
     def _get_rewards(self) -> torch.Tensor:

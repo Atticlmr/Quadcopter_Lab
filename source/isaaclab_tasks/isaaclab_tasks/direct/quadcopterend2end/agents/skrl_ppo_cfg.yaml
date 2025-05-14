@@ -1,11 +1,10 @@
 seed: 42
-
-
+# env.observation_space shape: (100, 113, 112, 1)
 # Models are instantiated using skrl's model instantiator utility
 # https://skrl.readthedocs.io/en/latest/api/utils/model_instantiators.html
 models:
   separate: False
-  policy:  # see gaussian_model parameters
+  policy:  
     class: GaussianMixin
     clip_actions: False
     clip_log_std: True
@@ -14,19 +13,19 @@ models:
     initial_log_std: 0.0
     network:
       - name: cnn_encoder
-        input: STATES[:, :40000].reshape(-1, 1, 200, 200)
+        input: STATES[:, :112, :]
         layers: 
           - conv2d: {out_channels: 32, kernel_size: 5, stride: 2, padding: 2}
           
           - conv2d: {out_channels: 64, kernel_size: 3, stride: 2, padding: 1}
          
-          - flatten: {start_dim: 1}  
+          - flatten: [1, -1]
         activations: [elu, elu, elu]
         output: cnn_features  
 
       # MLP处理状态向量 (后13维)
       - name: state_processor
-        input: STATES[:, -13:]  # [20,13]
+        input: STATES[:, 112:, :12] 
         layers: 
           - linear: 64
           - linear: 64
@@ -44,11 +43,32 @@ models:
     class: DeterministicMixin
     clip_actions: False
     network:
-      - name: net
-        input:  STATES[:, -12:]
-        layers: [128, 64]
+      - name: cnn_value
+        input: STATES[:112, :, :]
+        layers: 
+          - conv2d: {out_channels: 32, kernel_size: 5, stride: 2, padding: 2}
+          
+          - conv2d: {out_channels: 64, kernel_size: 3, stride: 2, padding: 1}
+         
+          - flatten: [1, -1]
+        activations: [elu, elu, elu]
+        output: cnn_features  
+
+      # MLP处理状态向量 (12维)
+      - name: state_processor
+        input: STATES[112, :12, ]
+        layers: 
+          - linear: 64
+          - linear: 32
         activations: elu
-    output: ONE
+        output: state_features  
+
+      # 特征融合层
+      - name: merged_features
+        input: concatenate([cnn_value, state_processor])
+        layers: [128,64]
+        activations: elu
+    output: ones
 
 
 # Rollout memory
@@ -98,7 +118,7 @@ agent:
 # https://skrl.readthedocs.io/en/latest/api/trainers/sequential.html
 trainer:
   class: SequentialTrainer
-  timesteps: 20000
+  timesteps: 200000
   # timesteps: 4800
   environment_info: log
 

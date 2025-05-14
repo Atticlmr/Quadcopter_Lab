@@ -188,8 +188,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     #         print(f"  {key}: {space}")
     # else:  # 如果是Box空间
     #     print(f"Observation space: {env.observation_space}")
-
-
+    # print("-------------------------------------------------------")
+    # print("env.observation_space shape:",env.observation_space.shape)
+    # print("-------------------------------------------------------")
     # ---------------------------------------------------------------------
     # wrap around environment for skrl
     env = SkrlVecEnvWrapper(env, ml_framework=args_cli.ml_framework)  # same as: `wrap_env(env, wrapper="auto")`
